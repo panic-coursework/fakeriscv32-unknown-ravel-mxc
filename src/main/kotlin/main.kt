@@ -15,7 +15,7 @@ fun main (args: Array<String>) {
       val lexer = MxLexer(input)
       val parser = MxParser(CommonTokenStream(lexer))
       val rules = MxParser.ruleNames.toList()
-      parser.hello().toStringTree(rules)
+      parser.program().toStringTree(rules)
     }
     "ast" -> {
       TODO()

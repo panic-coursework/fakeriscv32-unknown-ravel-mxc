@@ -4,7 +4,7 @@ import org.antlr.v4.runtime.*
 import org.antlr.v4.gui.TestRig
 
 fun invokeTestRig (input: CharStream) {
-  class TestRigClass : TestRig(arrayOf("MxParser", "hello", "-gui")) {
+  class TestRigClass : TestRig(arrayOf("MxParser", "program", "-gui")) {
     fun invoke (input: CharStream) {
       val lexer = MxLexer(input)
       val tokens = CommonTokenStream(lexer)
