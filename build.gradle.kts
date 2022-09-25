@@ -15,7 +15,7 @@ repositories {
 
 dependencies {
   antlr("org.antlr:antlr4:4.11.1")
-  testImplementation(kotlin("test"))
+  implementation("org.jetbrains.kotlin:kotlin-reflect:1.7.10")
 }
 
 tasks.withType<KotlinCompile> {
@@ -27,8 +27,8 @@ application {
 }
 
 tasks.getByName("generateGrammarSource") {
-    this as AntlrTask
-    arguments = arguments + listOf("-package", "org.altk.lab.mxc")
+  this as AntlrTask
+  arguments = arguments + listOf("-package", "org.altk.lab.mxc", "-visitor")
 }
 
 tasks.compileKotlin {

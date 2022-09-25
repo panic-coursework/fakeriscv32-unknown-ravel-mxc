@@ -24,25 +24,24 @@ Return: 'return';
 IdentifierName: IdentifierStart IdentifierPart*;
 fragment IdentifierStart: [a-zA-Z];
 fragment IdentifierPart: IdentifierStart | [0-9_];
-fragment SignPart: [+-]?;
 
 fragment NumericLiteralSeperator: '\'';
 DecimalIntegerLiteral
-  : SignPart '0' [dD] DecimalDigits
-  | SignPart [1-9] DecimalDigits?
-  | SignPart '0'
+  : '0' [dD] DecimalDigits
+  | [1-9] DecimalDigits?
+  | '0'
   ;
 fragment DecimalDigits: DecimalDigit (DecimalDigit | NumericLiteralSeperator)*;
 fragment DecimalDigit: [0-9];
-HexIntegerLiteral: SignPart '0' [xX] HexDigits;
+HexIntegerLiteral: '0' [xX] HexDigits;
 fragment HexDigits: HexDigit (HexDigit | NumericLiteralSeperator)*;
 fragment HexDigit: [0-9a-fA-F];
-BinaryIntegerLiteral: SignPart '0' [bB] BinaryDigits;
+BinaryIntegerLiteral: '0' [bB] BinaryDigits;
 fragment BinaryDigits: BinaryDigit (BinaryDigit | NumericLiteralSeperator)*;
 fragment BinaryDigit: [01];
 
 StringLiteral: '"' StringChars '"';
-fragment StringChars: StringChar+?;
+fragment StringChars: StringChar*?;
 fragment StringChar
   : ~["\\]
   | '\\' EscapeSequence
@@ -93,6 +92,8 @@ BraceOpen: '{';
 BraceClose: '}';
 Semicolon: ';';
 Comma: ',';
+
+Hole: '_';
 
 WS
   :(' '

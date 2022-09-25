@@ -12,17 +12,17 @@ programItem
   | lexicalDeclaration  # ProgramLexical
   ;
 
-functionDeclaration: typeId name=identifier parameterList body=blockStatement;
+functionDeclaration: typeId identifier parameterList body=blockStatement;
 parameterList: '(' (functionParameter ',')* functionParameter? ')';
-functionParameter: typeId name=identifier;
+functionParameter: typeId identifier;
 
-classDeclaration: 'class' name=identifier '{' classElement* '}' ';';
+classDeclaration: 'class' identifier '{' classElement* '}' ';';
 classElement
   : lexicalDeclaration     # ClassLexical
   | constructorDeclaration # ClassConstructor
   | functionDeclaration    # ClassFunction
   ;
-constructorDeclaration: name=identifier '(' ')' body=blockStatement;
+constructorDeclaration: identifier '(' ')' body=blockStatement;
 
 lexicalDeclaration: typeId (lexicalBinding ',')* lexicalBinding eos;
 lexicalBinding: identifier ('=' initializer=expression)?;
@@ -44,7 +44,7 @@ expressionStatement: expression eos;
 ifStatement: 'if' '(' cond=expression ')' consequent=statement ('else' alternate=statement)?;
 iterationStatement
   : 'while' '(' cond=expression ')' body=statement # LoopWhile
-  | 'for' '(' init=expression? ';' cond=expression? ';' step=expression? ')' body=statement   # LoopForExpr
+  | 'for' '(' init=expression? ';'    cond=expression? ';' step=expression? ')' body=statement # LoopForExpr
   | 'for' '(' init=lexicalDeclaration cond=expression? ';' step=expression? ')' body=statement # LoopForDecl
   ;
 continueStatement: 'continue' eos;
@@ -66,7 +66,7 @@ leftHandSideExpression
   : identifier                                                   # LhsIdentifier
   | literalExpression                                            # LhsLiteral
   | '[' capture='&'? ']' parameterList? '->' body=blockStatement # LhsLambda
-  | 'new' type=newableType ('(' ')')?                            # LhsNew
+  | 'new' type=newTypeId ('(' ')')?                              # LhsNew
   | '(' expression ')'                                           # LhsParenthesized
   | object=leftHandSideExpression '.' prop=identifier            # LhsMember
   | object=leftHandSideExpression '[' prop=expression ']'        # LhsComputed
@@ -105,20 +105,25 @@ identifier: IdentifierName;
 
 typeId
   : primitiveTypeId # TypePrimitive
+  | '_'             # TypeHole
   | identifier      # TypeUserDefined
   | typeId '[' ']'  # TypeArray
+  | '(' typeId ')'  # TypeParenthesized
+  | <assoc=right> param=typeId '->' returnType=typeId # TypeFunctionSingleParam
+  | params=parameterTypeList   '->' returnType=typeId # TypeFunction
   ;
 primitiveTypeId: 'bool' | 'int' | 'void' | 'string';
+parameterTypeList: '(' (typeId ',')* typeId? ')';
 
-newableTypeWithoutLength
+newTypeIdBasic
   : primitiveTypeId # NewPrimitive
   | identifier      # NewIdentifier
   ;
-newableTypeWithLength
-  : t=newableTypeWithoutLength '[' length=expression ']' # NewArrayStart
-  | t=newableTypeWithLength '[' length=expression? ']'   # NewArrayPart
+newTypeIdArray
+  : t=newTypeIdBasic '[' length=expression ']'  # NewArrayStart
+  | t=newTypeIdArray '[' length=expression? ']' # NewArrayPart
   ;
-newableType
-  : newableTypeWithLength    # NewArray
-  | newableTypeWithoutLength # NewBasic
+newTypeId
+  : newTypeIdArray # NewArray
+  | newTypeIdBasic # NewBasic
   ;
