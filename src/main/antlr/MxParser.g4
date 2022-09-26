@@ -41,15 +41,15 @@ statement
 blockStatement: '{' statement* '}';
 
 expressionStatement: expression eos;
-ifStatement: 'if' '(' cond=expression ')' consequent=statement ('else' alternate=statement)?;
+ifStatement: 'if' '(' test=expression ')' consequent=statement ('else' alternate=statement)?;
 iterationStatement
-  : 'while' '(' cond=expression ')' body=statement # LoopWhile
-  | 'for' '(' init=expression? ';'    cond=expression? ';' step=expression? ')' body=statement # LoopForExpr
-  | 'for' '(' init=lexicalDeclaration cond=expression? ';' step=expression? ')' body=statement # LoopForDecl
+  : 'while' '(' test=expression ')' body=statement # LoopWhile
+  | 'for' '(' init=expression? ';'    test=expression? ';' update=expression? ')' body=statement # LoopForExpr
+  | 'for' '(' init=lexicalDeclaration test=expression? ';' update=expression? ')' body=statement # LoopForDecl
   ;
 continueStatement: 'continue' eos;
 breakStatement: 'break' eos;
-returnStatement: 'return' value=expression? eos;
+returnStatement: 'return' argument=expression? eos;
 emptyStatement: eos;
 
 eos: ';';
@@ -70,13 +70,13 @@ leftHandSideExpression
   | '(' expression ')'                                           # LhsParenthesized
   | object=leftHandSideExpression '.' prop=identifier            # LhsMember
   | object=leftHandSideExpression '[' prop=expression ']'        # LhsComputed
-  | op=('++' | '--') target=leftHandSideExpression               # LhsPrefixUpdate
+  | op=('++' | '--') argument=leftHandSideExpression             # LhsPrefixUpdate
   | callee=leftHandSideExpression arguments                      # LhsCall
   ;
 
 expression
   : l=leftHandSideExpression                                             # ExprLhs
-  | target=leftHandSideExpression op=('++' | '--')                       # ExprPostfixUpdate
+  | argument=leftHandSideExpression op=('++' | '--')                     # ExprPostfixUpdate
   | <assoc=right> op=('!' | '~' | '+' | '-')                r=expression # ExprUnary
   | l=expression op=('*' | '/' | '%')                       r=expression # ExprBinary
   | l=expression op=('+' | '-')                             r=expression # ExprBinary
@@ -90,7 +90,7 @@ expression
   | <assoc=right> l=leftHandSideExpression op='='           r=expression # ExprAssign
   ;
 
-arguments: '(' (args=expression ',')* args=expression? ')';
+arguments: '(' (expression ',')* expression? ')';
 integerLiteral
   : DecimalIntegerLiteral # IntDecimal
   | HexIntegerLiteral     # IntHex
@@ -112,17 +112,17 @@ typeId
   | <assoc=right> param=typeId '->' returnType=typeId # TypeFunctionSingleParam
   | params=parameterTypeList   '->' returnType=typeId # TypeFunction
   ;
-primitiveTypeId: 'bool' | 'int' | 'void' | 'string';
+primitiveTypeId
+  : 'bool'   # PrimitiveBool
+  | 'int'    # PrimitiveInt
+  | 'void'   # PrimitiveVoid
+  | 'string' # PrimitiveString
+  ;
 parameterTypeList: '(' (typeId ',')* typeId? ')';
 
-newTypeIdBasic
-  : primitiveTypeId # NewPrimitive
-  | identifier      # NewIdentifier
-  ;
-newTypeIdArray
-  : t=newTypeIdBasic '[' length=expression ']'  # NewArrayStart
-  | t=newTypeIdArray '[' length=expression? ']' # NewArrayPart
-  ;
+newTypeIdBasic: identifier;
+newTypeIdArray: base=typeId ('[' expression ']')+ arrayBraces*;
+arrayBraces: '[' ']';
 newTypeId
   : newTypeIdArray # NewArray
   | newTypeIdBasic # NewBasic

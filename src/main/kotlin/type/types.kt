@@ -1,4 +1,4 @@
-package org.altk.lab.mxc.typechecker
+package org.altk.lab.mxc.type
 
 import org.altk.lab.mxc.*
 

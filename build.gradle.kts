@@ -28,7 +28,7 @@ application {
 
 tasks.getByName("generateGrammarSource") {
   this as AntlrTask
-  arguments = arguments + listOf("-package", "org.altk.lab.mxc", "-visitor")
+  arguments = arguments + listOf("-package", "org.altk.lab.mxc.recognizer", "-visitor")
 }
 
 tasks.compileKotlin {

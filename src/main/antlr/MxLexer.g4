@@ -28,10 +28,11 @@ fragment IdentifierPart: IdentifierStart | [0-9_];
 fragment NumericLiteralSeperator: '\'';
 DecimalIntegerLiteral
   : '0' [dD] DecimalDigits
-  | [1-9] DecimalDigits?
+  | [1-9] DecimalDigitsPart
   | '0'
   ;
-fragment DecimalDigits: DecimalDigit (DecimalDigit | NumericLiteralSeperator)*;
+fragment DecimalDigitsPart: (DecimalDigit | NumericLiteralSeperator)*;
+fragment DecimalDigits: DecimalDigit DecimalDigitsPart;
 fragment DecimalDigit: [0-9];
 HexIntegerLiteral: '0' [xX] HexDigits;
 fragment HexDigits: HexDigit (HexDigit | NumericLiteralSeperator)*;
@@ -43,7 +44,7 @@ fragment BinaryDigit: [01];
 StringLiteral: '"' StringChars '"';
 fragment StringChars: StringChar*?;
 fragment StringChar
-  : ~["\\]
+  : ~["\\\n]
   | '\\' EscapeSequence
   ;
 fragment EscapeSequence
@@ -51,7 +52,7 @@ fragment EscapeSequence
   | HexEscapeSequence
   | UnicodeEscapeSequence
   ;
-fragment CharacterEscapeSequence: ['"\\abrntefv0$];
+fragment CharacterEscapeSequence: ['"\\brntefv0$];
 fragment HexEscapeSequence: [xX] HexDigit HexDigit;
 fragment UnicodeEscapeSequence
   : [uU] HexDigit HexDigit HexDigit HexDigit

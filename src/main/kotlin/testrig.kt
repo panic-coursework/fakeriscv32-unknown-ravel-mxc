@@ -1,9 +1,12 @@
 package org.altk.lab.mxc
 
+import org.altk.lab.mxc.recognizer.*
 import org.antlr.v4.runtime.*
 import org.antlr.v4.gui.TestRig
+import java.io.InputStream
 
-fun invokeTestRig (input: CharStream) {
+fun invokeTestRig (inputStream: InputStream) {
+  val input = CharStreams.fromStream(inputStream)
   class TestRigClass : TestRig(arrayOf("MxParser", "program", "-gui")) {
     fun invoke (input: CharStream) {
       val lexer = MxLexer(input)

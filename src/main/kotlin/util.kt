@@ -2,22 +2,20 @@ package org.altk.lab.mxc
 
 import org.antlr.v4.runtime.*
 
-data class Position(val line: Int, val col: Int)
-data class SourceLocation
-  (val source: String, val start: Position, val end: Position)
+data class Position(val line: Int, val col: Int) {
+  override fun toString() = "$line:$col"
+}
 
-open class SourceContext(
-  val parsed: ParserRuleContext,
-  val env: EnvironmentRecord,
-) {
+data class SourceLocation(val start: Position, val end: Position)
+
+open class SourceContext(val parsed: ParserRuleContext) {
   val loc: SourceLocation
-    get() {
-      return SourceLocation(
-        parsed.text,
-        Position(parsed.start.line, parsed.start.charPositionInLine),
-        endPosition(parsed.stop),
-      )
-    }
+    get() = SourceLocation(
+      Position(parsed.start.line, parsed.start.charPositionInLine),
+      endPosition(parsed.stop),
+    )
+  val source: String
+    get() = parsed.text
 }
 
 private fun endPosition(token: Token): Position {

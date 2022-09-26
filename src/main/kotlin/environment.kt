@@ -1,6 +1,6 @@
 package org.altk.lab.mxc
 
-import org.altk.lab.mxc.typechecker.*
+import org.altk.lab.mxc.type.*
 
 class Binding(val ctx: SourceContext?, val name: String, val type: Type) {
   var id: Int? = null
@@ -34,8 +34,4 @@ class EnvironmentRecord(val outerEnv: EnvironmentRecord?, val thisType: Type?) {
     } else {
       outerEnv?.getIdentifierReference(ctx, name)
     }
-}
-
-interface Scope {
-  val env: EnvironmentRecord
 }

@@ -1,46 +1,56 @@
 package org.altk.lab.mxc
 
+import org.altk.lab.mxc.ast.ast
+import org.altk.lab.mxc.recognizer.*
 import org.antlr.v4.runtime.*
-import org.antlr.v4.runtime.atn.ATNConfigSet
-import org.antlr.v4.runtime.dfa.DFA
 import java.io.FileInputStream
-import java.util.*
 import kotlin.collections.HashSet
 import kotlin.system.exitProcess
 
-fun main (args: Array<String>) {
+fun main(args: Array<String>) {
   if (args.isEmpty()) {
     error("Usage: app <command> [file]")
   }
-  val inputStream = if (args.size > 1) { FileInputStream(args[1]) } else { System.`in` }
-  val input = CharStreams.fromStream(inputStream)
+  val inputStream = if (args.size > 1) {
+    FileInputStream(args[1])
+  } else {
+    System.`in`
+  }
   when (args[0]) {
-    "testrig" -> invokeTestRig(input)
+    "testrig" -> invokeTestRig(inputStream)
     "parse" -> {
-      val lexer = MxLexer(input)
-      val parser = MxParser(CommonTokenStream(lexer))
+      val program = parse(inputStream)
       val rules = MxParser.ruleNames.toList()
-      println(parser.program().toStringTree(rules))
+      println(program.toStringTree(rules))
     }
+
     "ast" -> {
-      TODO()
+      val program = parse(inputStream)
+      try {
+        val tree = ast(program)
+        println(tree)
+      } catch (e: MxcError) {
+        System.err.println(e)
+        exitProcess(1)
+      }
     }
+
     "check-bindings" -> {
-      class ExitListener : ANTLRErrorListener {
-        override fun syntaxError (recognizer: Recognizer<*, *>?, offendingSymbol: Any?, line: Int, charPositionInLine: Int, msg: String?, e: RecognitionException?) {
+      class ExitListener : BaseErrorListener() {
+        override fun syntaxError(
+          recognizer: Recognizer<*, *>?,
+          offendingSymbol: Any?,
+          line: Int,
+          charPositionInLine: Int,
+          msg: String?,
+          e: RecognitionException?
+        ) {
           print(e)
           exitProcess(0)
         }
-        override fun reportAmbiguity (recognizer: Parser?, dfa: DFA?, startIndex: Int, stopIndex: Int, exact: Boolean, ambigAlts: BitSet?, configs: ATNConfigSet?) {
-          exitProcess(0)
-        }
-        override fun reportAttemptingFullContext (recognizer: Parser?, dfa: DFA?, startIndex: Int, stopIndex: Int, conflictingAlts: BitSet?, configs: ATNConfigSet?) {
-          exitProcess(0)
-        }
-        override fun reportContextSensitivity (recognizer: Parser?, dfa: DFA?, startIndex: Int, stopIndex: Int, prediction: Int, configs: ATNConfigSet?) {
-          exitProcess(0)
-        }
       }
+
+      val input = CharStreams.fromStream(inputStream)
       val lexer = MxLexer(input)
       lexer.removeErrorListeners()
       lexer.addErrorListener(ExitListener())
@@ -48,10 +58,11 @@ fun main (args: Array<String>) {
       parser.removeErrorListeners()
       parser.addErrorListener(ExitListener())
       val prog = parser.program()
+
       class Visitor : MxParserBaseVisitor<Unit>() {
         var funcs = HashSet<String>()
         var vars = HashSet<String>()
-        override fun visitFunctionDeclaration (ctx: MxParser.FunctionDeclarationContext) {
+        override fun visitFunctionDeclaration(ctx: MxParser.FunctionDeclarationContext) {
           val name = ctx.identifier().IdentifierName().text
           funcs.add(name)
           return super.visitFunctionDeclaration(ctx)
@@ -63,6 +74,7 @@ fun main (args: Array<String>) {
           return super.visitLexicalBinding(ctx)
         }
       }
+
       val v = Visitor()
       prog.accept(v)
       val intersection = v.funcs.intersect(v.vars)
@@ -76,6 +88,7 @@ fun main (args: Array<String>) {
         exitProcess(1)
       }
     }
+
     else -> error("unknown command ${args[0]}")
   }
 }
