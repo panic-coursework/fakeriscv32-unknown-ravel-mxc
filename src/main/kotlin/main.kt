@@ -2,8 +2,10 @@ package org.altk.lab.mxc
 
 import org.altk.lab.mxc.ast.ast
 import org.altk.lab.mxc.recognizer.*
+import org.altk.lab.mxc.type.typecheck
 import org.antlr.v4.runtime.*
 import java.io.FileInputStream
+import org.antlr.v4.gui.TestRig
 import kotlin.collections.HashSet
 import kotlin.system.exitProcess
 
@@ -17,7 +19,6 @@ fun main(args: Array<String>) {
     System.`in`
   }
   when (args[0]) {
-    "testrig" -> invokeTestRig(inputStream)
     "parse" -> {
       val program = parse(inputStream)
       val rules = MxParser.ruleNames.toList()
@@ -33,6 +34,30 @@ fun main(args: Array<String>) {
         System.err.println(e)
         exitProcess(1)
       }
+    }
+
+    "tyck" -> {
+      val program = parse(inputStream)
+      try {
+        val tree = ast(program)
+        typecheck(tree)
+      } catch (e: MxcError) {
+        System.err.println(e)
+        exitProcess(1)
+      }
+    }
+
+    "testrig" -> {
+      val input = CharStreams.fromStream(inputStream)
+      class TestRigClass : TestRig(arrayOf("MxParser", "program", "-gui")) {
+        fun invoke (input: CharStream) {
+          val lexer = MxLexer(input)
+          val tokens = CommonTokenStream(lexer)
+          val parser = MxParser(tokens)
+          process(lexer, MxParser::class.java, parser, input)
+        }
+      }
+      TestRigClass().invoke(input)
     }
 
     "check-bindings" -> {

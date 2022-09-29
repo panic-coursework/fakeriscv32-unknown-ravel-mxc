@@ -6,16 +6,29 @@ data class Position(val line: Int, val col: Int) {
   override fun toString() = "$line:$col"
 }
 
-data class SourceLocation(val start: Position, val end: Position)
+open class SourceLocation(val start: Position, val end: Position) {
+  override fun toString() = "input:$start to input:$end"
+}
 
-open class SourceContext(val parsed: ParserRuleContext) {
-  val loc: SourceLocation
+class BuiltinSourceLocation : SourceLocation(Position(-1, -1), Position(-1, -1)) {
+  override fun toString() = "[native code]"
+}
+
+open class SourceContext(val parsed: ParserRuleContext?) {
+  open val loc: SourceLocation
     get() = SourceLocation(
-      Position(parsed.start.line, parsed.start.charPositionInLine),
+      Position(parsed!!.start.line, parsed.start.charPositionInLine),
       endPosition(parsed.stop),
     )
-  val source: String
-    get() = parsed.text
+  open val source: String
+    get() = parsed!!.text
+
+  override fun toString() = loc.toString()
+}
+
+object BuiltinSourceContext : SourceContext(null) {
+  override val loc = BuiltinSourceLocation()
+  override val source = "[native code]"
 }
 
 private fun endPosition(token: Token): Position {

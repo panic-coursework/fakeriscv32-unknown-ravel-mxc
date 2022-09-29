@@ -18,7 +18,7 @@ private fun valueToString(v: Any?): String = when (v) {
 }
 
 sealed class Node(val ctx: SourceContext) {
-  @SuppressWarnings("unchecked")
+  @Suppress("UNCHECKED_CAST")
   override fun toString(): String {
     val className = this::class.simpleName
     val fields = this::class.memberProperties.filter {
@@ -206,18 +206,18 @@ class StringType(ctx: SourceContext) : PrimitiveType(ctx)
 
 class HoleType(ctx: SourceContext) : Node(ctx), TypeId
 
-class ArrayType(ctx: SourceContext, val type: TypeId) : Node(ctx), TypeId
+class ArrayType(ctx: SourceContext, val typeId: TypeId) : Node(ctx), TypeId
 
-class GroupedType(ctx: SourceContext, val type: TypeId) : Node(ctx), TypeId
+class GroupedType(ctx: SourceContext, val typeId: TypeId) : Node(ctx), TypeId
 class FunctionType(
   ctx: SourceContext,
-  val arguments: List<TypeId>,
+  val params: List<TypeId>,
   val returnType: TypeId,
 ) : Node(ctx), TypeId
 
 class NewArrayType(
   ctx: SourceContext,
-  val type: TypeId,
+  val typeId: TypeId,
   val length: Expression,
 ) : Node(ctx), TypeId, NewTypeId
 

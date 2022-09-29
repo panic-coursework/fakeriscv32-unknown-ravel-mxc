@@ -12,7 +12,10 @@ fun parseInt(input: IntegerLiteralContext): Int {
     is IntDecimalContext -> text.toInt()
     is IntHexContext -> text.substring(2).toInt(0x10)
     is IntBinaryContext -> text.substring(2).toInt(0b10)
-    else -> throw MxcInternalError(input.ctx, "Unable to parse int ${input.text}")
+    else -> throw MxcInternalError(
+      input.ctx,
+      "Unable to parse int ${input.text}"
+    )
   }
 }
 
@@ -21,9 +24,13 @@ fun unescape(input: StringLiteralContext): String {
   val re =
     Regex("""\\(?:(?<char>[^xXuU])|[xX](?<hex>[0-9a-fA-F]{2})|[uU](?<unicode4>[0-9a-fA-F]{4})|[uU]\{(?<unicodeAny>[0-9a-fA-F]{2,})})""")
   return str.replace(re) { match ->
-    match.groups["char"]?.value?.let { unescapeChar(it[0]) }
-      ?: (match.groups["hex"] ?: match.groups["unicode4"]
-      ?: match.groups["unicodeAny"])?.value?.let { unescapeHex(it) }
+    val groups = match.groups
+    if (groups !is MatchNamedGroupCollection) {
+      throw MxcInternalError(input.ctx, "Unable to parse string")
+    }
+    groups["char"]?.value?.let { unescapeChar(it[0]) }
+      ?: (groups["hex"] ?: groups["unicode4"] ?: groups["unicodeAny"])
+        ?.value?.let { unescapeHex(it) }
       ?: throw MxcInternalError(input.ctx, "Unknown escape sequence in $str")
   }
 }

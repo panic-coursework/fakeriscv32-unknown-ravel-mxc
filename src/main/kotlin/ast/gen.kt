@@ -7,10 +7,10 @@ import org.antlr.v4.runtime.ParserRuleContext
 val ParserRuleContext.ctx: SourceContext
   get() = SourceContext(this)
 
-val IdentifierContext.ast: Identifier
+private val IdentifierContext.ast: Identifier
   get() = ast(this)
 
-val TypeIdContext.ast: TypeId
+private val TypeIdContext.ast: TypeId
   get() = ast(this)
 
 
