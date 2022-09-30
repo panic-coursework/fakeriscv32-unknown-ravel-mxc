@@ -1,5 +1,6 @@
 package org.altk.lab.mxc.type
 
+import org.altk.lab.mxc.MxcInternalError
 import org.altk.lab.mxc.SourceContext
 import org.altk.lab.mxc.ReferenceError
 import org.altk.lab.mxc.TypeError
@@ -25,7 +26,7 @@ class ReferenceRecord(val env: EnvironmentRecord, val binding: Binding) {
 }
 
 open class EnvironmentRecord(val outerEnv: EnvironmentRecord?) {
-  private val bindings = HashMap<String, Binding>()
+  val bindings = HashMap<String, Binding>()
 
   fun hasBinding(name: String) = name in bindings
   fun getBinding(ctx: SourceContext?, name: String) =
@@ -42,7 +43,8 @@ open class EnvironmentRecord(val outerEnv: EnvironmentRecord?) {
   fun createBinding(binding: Binding) {
     val name = binding.name
     if (hasBinding(name)) {
-      throw ReferenceError(binding.ctx, "Binding $name already declared")
+      val msg = "Binding $name has already been declared"
+      throw ReferenceError(binding.ctx, msg)
     }
     bindings[name] = binding
   }
@@ -60,6 +62,8 @@ open class EnvironmentRecord(val outerEnv: EnvironmentRecord?) {
     get() = if (this is LoopEnvironmentRecord) this else outerEnv?.loopEnv
   val functionEnv: FunctionEnvironmentRecord?
     get() = if (this is FunctionEnvironmentRecord) this else outerEnv?.functionEnv
+  val classEnv: ClassEnvironmentRecord?
+    get() = if (this is ClassEnvironmentRecord) this else outerEnv?.classEnv
 }
 
 class GlobalEnvironmentRecord : EnvironmentRecord(null) {
@@ -73,3 +77,14 @@ class GlobalEnvironmentRecord : EnvironmentRecord(null) {
 
 class LoopEnvironmentRecord(env: EnvironmentRecord) : EnvironmentRecord(env)
 class FunctionEnvironmentRecord(env: EnvironmentRecord) : EnvironmentRecord(env)
+class ClassEnvironmentRecord(env: EnvironmentRecord) : EnvironmentRecord(env) {
+  private var type_: Type? = null
+  var type
+    get() = type_!!
+    set(v) {
+      if (type_ != null) {
+        throw MxcInternalError(null, "ClassEnv.type was set more than once")
+      }
+      type_ = v
+    }
+}

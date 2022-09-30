@@ -5,6 +5,7 @@ sealed class Type {
 
   open val complete: Boolean
     get() = typeArgs.all { it.complete }
+  open val isVoid get() = false
 
   override fun equals(other: Any?): Boolean {
     if (other == null) return false
@@ -36,7 +37,9 @@ object MxNullptr : IncompleteType("null")
 
 object MxInt : PrimitiveType("int")
 object MxBool : PrimitiveType("bool")
-object MxVoid : PrimitiveType("void")
+object MxVoid : PrimitiveType("void") {
+  override val isVoid get() = true
+}
 object MxString : PrimitiveType("string"), ObjectType {
   override val env = createStringEnv()
 }
@@ -45,16 +48,17 @@ class MxArray(val content: Type) : Type(), ObjectType {
   override val typeArgs = listOf(content)
   override val env = createArrayEnv()
   override fun toString() = "($content)[]"
+  override val isVoid get() = content.isVoid
 }
 
 class MxStruct(val name: String, override val env: EnvironmentRecord) : Type(),
   ObjectType {
   override fun equals(other: Any?) = this === other
-  override fun hashCode() = (Any::hashCode)(this)
+  override fun hashCode() = super.hashCode()
   override fun toString() = name
 }
 
 class MxFunction(val params: List<Type>, val returnType: Type) : Type() {
   override val typeArgs = params + returnType
-  override fun toString() = "($params) -> ($returnType)"
+  override fun toString() = "(${params.joinToString(", ")}) -> $returnType"
 }

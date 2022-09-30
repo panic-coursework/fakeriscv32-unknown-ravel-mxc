@@ -1,35 +1,41 @@
 package org.altk.lab.mxc.ast
 
 import org.altk.lab.mxc.*
+import org.altk.lab.mxc.type.TypecheckRecord
 import kotlin.reflect.KProperty1
 import kotlin.reflect.full.memberProperties
 
-private fun valueToString(v: Any?): String = when (v) {
+private fun valueToString(v: Any?, rec: TypecheckRecord?): String = when (v) {
   null -> "null"
   is String -> "\"$v\"".replace("\\", "\\\\").replace("\\\\\"", "\\\"")
     .replace("\n", "\\n")
 
   is Boolean -> v.toString()
-  is Node -> v.toString()
   is Int -> v.toString()
   is Double -> v.toString()
-  is List<*> -> v.map { valueToString(it) }.toString()
+  is List<*> -> v.map { valueToString(it, rec) }.toString()
+  is Node -> rec?.let { v.toString(it) } ?: v.toString()
   else -> "\"$v\""
 }
 
 sealed class Node(val ctx: SourceContext) {
+  override fun toString() = toString(null)
+
   @Suppress("UNCHECKED_CAST")
-  override fun toString(): String {
+  fun toString(rec: TypecheckRecord?): String {
     val className = this::class.simpleName
     val fields = this::class.memberProperties.filter {
       it.name != "ctx"
     }.joinToString {
       it as KProperty1<Node, *>
-      val value = valueToString(it.get(this))
+      val v = it.get(this)
+      val value = valueToString(v, rec)
       "\"${it.name}\": $value"
     }
+    val type =
+      if (this is Expression && rec != null) ", \"type\": \"${rec.types[this]}\"" else ""
     val comma = if (fields.isNotEmpty()) ", " else ""
-    return "{\"type\": \"$className\"$comma$fields}"
+    return "{\"is\": \"$className\"$type$comma$fields}"
   }
 }
 
@@ -50,7 +56,7 @@ class FunctionDeclaration(
 class FunctionParameter(
   ctx: SourceContext,
   val id: Identifier,
-  val type: TypeId,
+  val typeId: TypeId,
 ) : Node(ctx)
 
 class VariableDeclaration(
@@ -94,7 +100,7 @@ class IfStatement(
   ctx: SourceContext,
   val test: Expression,
   val consequent: Statement,
-  val alternate: Statement,
+  val alternate: Statement?,
 ) : Statement(ctx)
 
 sealed class IterationStatement(ctx: SourceContext) : Statement(ctx)
@@ -121,7 +127,9 @@ class ReturnStatement(ctx: SourceContext, val argument: Expression?) :
   Statement(ctx)
 
 sealed class Expression(ctx: SourceContext) : Node(ctx), ForInit
-sealed class LeftHandSideExpression(ctx: SourceContext) : Expression(ctx)
+sealed class LeftHandSideExpression(ctx: SourceContext) : Expression(ctx) {
+  open val isLeftHandSide get() = true
+}
 
 class Identifier(ctx: SourceContext, val name: String) :
   LeftHandSideExpression(ctx), TypeId, NewTypeId
@@ -144,7 +152,10 @@ class NewExpression(ctx: SourceContext, val typeId: NewTypeId) :
   Expression(ctx)
 
 class GroupExpression(ctx: SourceContext, val expression: Expression) :
-  Expression(ctx)
+  LeftHandSideExpression(ctx) {
+  override val isLeftHandSide
+    get() = (expression as? LeftHandSideExpression)?.isLeftHandSide ?: false
+}
 
 class MemberExpression(
   ctx: SourceContext,
@@ -196,7 +207,8 @@ class AssignmentExpression(
 ) : Expression(ctx)
 
 sealed interface TypeId
-sealed interface NewTypeId
+sealed interface NewTypeId : TypeId
+
 sealed class PrimitiveType(ctx: SourceContext) : Node(ctx), TypeId
 
 class BoolType(ctx: SourceContext) : PrimitiveType(ctx)
@@ -204,7 +216,7 @@ class IntType(ctx: SourceContext) : PrimitiveType(ctx)
 class VoidType(ctx: SourceContext) : PrimitiveType(ctx)
 class StringType(ctx: SourceContext) : PrimitiveType(ctx)
 
-class HoleType(ctx: SourceContext) : Node(ctx), TypeId
+class HoleType(ctx: SourceContext) : Node(ctx), TypeId, NewTypeId
 
 class ArrayType(ctx: SourceContext, val typeId: TypeId) : Node(ctx), TypeId
 
@@ -219,7 +231,7 @@ class NewArrayType(
   ctx: SourceContext,
   val typeId: TypeId,
   val length: Expression,
-) : Node(ctx), TypeId, NewTypeId
+) : Node(ctx), NewTypeId
 
 enum class UnaryOperator {
   NOT, BIT_NOT, POS, NEG;

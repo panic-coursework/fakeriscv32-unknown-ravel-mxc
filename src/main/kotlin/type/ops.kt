@@ -5,7 +5,9 @@ infix fun Type.intersect(other: Type): Type {
     return other intersect this
   }
   if (this is MxBot) return MxBot
-  if (this is MxTop || this is MxHole) return other
+  if (this is MxHole) return other
+  if (other is MxHole) return this
+  if (this is MxTop) return other
   if (this is MxNullptr) return if (other is PrimitiveType) MxBot else other
   if (this == other) return this
 
@@ -33,8 +35,10 @@ infix fun Type.union(other: Type): Type {
   if (this !is IncompleteType && other is IncompleteType) {
     return other union this
   }
-  if (this is MxTop || other is MxTop) return MxTop
-  if (this is MxHole || this is MxBot) return other
+  if (this is MxTop) return MxTop
+  if (this is MxHole) return other
+  if (other is MxHole) return this
+  if (this is MxBot) return other
   if (this is MxNullptr) return if (other is PrimitiveType) MxTop else other
   if (this == other) return this
 

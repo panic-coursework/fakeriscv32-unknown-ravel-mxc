@@ -120,9 +120,13 @@ primitiveTypeId
   ;
 parameterTypeList: '(' (typeId ',')* typeId? ')';
 
-newTypeIdBasic: identifier;
-newTypeIdArray: base=typeId ('[' expression ']')+ arrayBraces*;
+newTypeIdBasic
+  : identifier # NewBasicIdentifier
+  | '_'        # NewBasicHole
+  ;
+newTypeIdArray: base=typeId ('[' expression ']')+ arrayBraces* badArrayBraces?;
 arrayBraces: '[' ']';
+badArrayBraces: ('[' expression ']')+;
 newTypeId
   : newTypeIdArray # NewArray
   | newTypeIdBasic # NewBasic

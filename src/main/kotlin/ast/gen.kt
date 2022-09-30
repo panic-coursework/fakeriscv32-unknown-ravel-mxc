@@ -95,7 +95,7 @@ fun ast(input: IfStatementContext) = IfStatement(
   input.ctx,
   ast(input.test),
   ast(input.consequent),
-  ast(input.alternate),
+  input.alternate?.let { ast(it) },
 )
 
 fun ast(input: IterationStatementContext): IterationStatement = when (input) {
@@ -154,7 +154,7 @@ fun ast(input: LeftHandSideExpressionContext): Expression = when (input) {
 }
 
 private fun ensureLhs(input: Expression): LeftHandSideExpression {
-  if (input !is LeftHandSideExpression) {
+  if (input !is LeftHandSideExpression || !input.isLeftHandSide) {
     throw SyntaxError(input.ctx, "Invalid left hand side expression")
   }
   return input
@@ -193,13 +193,13 @@ fun ast(input: LhsParenthesizedContext) =
 
 fun ast(input: LhsMemberContext) = MemberExpression(
   input.ctx,
-  ensureLhs(ast(input.`object`)),
+  ast(input.`object`),
   input.identifier().ast,
 )
 
 fun ast(input: LhsComputedContext) = ComputedMemberExpression(
   input.ctx,
-  ensureLhs(ast(input.`object`)),
+  ast(input.`object`),
   ast(input.expression()),
 )
 
@@ -278,10 +278,21 @@ fun ast(input: NewTypeIdContext): NewTypeId = when (input) {
   else -> throw MxcInternalError(input.ctx, "Unknown new type $input")
 }
 
-fun ast(input: NewTypeIdBasicContext) = input.identifier().ast
+fun ast(input: NewTypeIdBasicContext): NewTypeId = when (input) {
+  is NewBasicIdentifierContext -> input.identifier().ast
+  is NewBasicHoleContext -> HoleType(input.ctx)
+  else -> throw MxcInternalError(input.ctx, "Unknown new type $input")
+}
 fun ast(input: NewTypeIdArrayContext): NewArrayType {
+  if (input.badArrayBraces() != null) {
+    throw SyntaxError(input.ctx, "Killed by magic")
+  }
+  val baseT = input.base.ast
+  if (baseT is VoidType || baseT is ArrayType || baseT is NewArrayType) {
+    throw TypeError(input.ctx, "Invalid new expression")
+  }
   val baseType = input.arrayBraces()
-    .fold(input.base.ast) { type, _ -> ArrayType(input.ctx, type) }
+    .fold(baseT) { type, _ -> ArrayType(input.ctx, type) }
   return input.expression().map { ast(it) }
     .foldRight(baseType) { length, base ->
       NewArrayType(input.ctx, base, length)
