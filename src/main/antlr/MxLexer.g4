@@ -25,20 +25,20 @@ IdentifierName: IdentifierStart IdentifierPart*;
 fragment IdentifierStart: [a-zA-Z];
 fragment IdentifierPart: IdentifierStart | [0-9_];
 
-fragment NumericLiteralSeperator: '\'';
+fragment NumericLiteralSeparator: '\'';
 DecimalIntegerLiteral
   : '0' [dD] DecimalDigits
   | [1-9] DecimalDigitsPart
   | '0'
   ;
-fragment DecimalDigitsPart: (DecimalDigit | NumericLiteralSeperator)*;
+fragment DecimalDigitsPart: (DecimalDigit | NumericLiteralSeparator)*;
 fragment DecimalDigits: DecimalDigit DecimalDigitsPart;
 fragment DecimalDigit: [0-9];
 HexIntegerLiteral: '0' [xX] HexDigits;
-fragment HexDigits: HexDigit (HexDigit | NumericLiteralSeperator)*;
+fragment HexDigits: HexDigit (HexDigit | NumericLiteralSeparator)*;
 fragment HexDigit: [0-9a-fA-F];
 BinaryIntegerLiteral: '0' [bB] BinaryDigits;
-fragment BinaryDigits: BinaryDigit (BinaryDigit | NumericLiteralSeperator)*;
+fragment BinaryDigits: BinaryDigit (BinaryDigit | NumericLiteralSeparator)*;
 fragment BinaryDigit: [01];
 
 StringLiteral: '"' StringChars '"';
@@ -52,7 +52,7 @@ fragment EscapeSequence
   | HexEscapeSequence
   | UnicodeEscapeSequence
   ;
-fragment CharacterEscapeSequence: ['"\\brntefv0$];
+fragment CharacterEscapeSequence: ['"\\brntfv0$];
 fragment HexEscapeSequence: [xX] HexDigit HexDigit;
 fragment UnicodeEscapeSequence
   : [uU] HexDigit HexDigit HexDigit HexDigit

@@ -1,0 +1,182 @@
+                 SYNTACTIC EXTENSIONS TO THE MX* LANGUAGE
+
+1. TYPES
+
+1.1. Function Types
+
+This compiler has support for function types, including lambda function types.
+This allows functions and lambdas to be passed around like normal values, and
+could still be called. The syntax of function types are defined as follows:
+
+    FunctionType ::= TypeList '->' TypeId
+                     TypeId '->' TypeId
+
+    TypeList ::= '(' (TypeId ',')* TypeId? ')'
+
+For example, the type of the functions
+
+    int main (int argc, string[] argv)
+    int main ()
+    int succ (int x)
+
+are
+
+    (int, string[]) -> int
+    () -> int
+    int -> int
+
+Higher order functions are supported:
+
+    (int, int) -> ((int, int) -> int) -> int cons = [] (int car, int cdr) -> {
+      return [&] ((int, int) -> int f) -> {
+        return f(car, cdr);
+      };
+    };
+    (((int, int) -> int) -> int) -> int car =
+      [] (((int, int) -> int) -> int pair) -> {
+        return pair([] (int a, int b) -> { return a; });
+      };
+    ((int, int) -> int) -> int p = cons(10, 20);
+    int x = car(p); // 10
+
+These function types can be used like primitive types. You can declare a
+variable with a function type, allowing a lambda function to be assigned to a
+variable. It can also be the content type of an array. For example:
+
+    (() -> int)[] numbers;
+    () -> int one = [] -> { return 1; };
+    numbers[1] = one;
+    numbers[2] = main; // main is a function of type () -> int
+
+1.2. Type Inference
+
+The type checker used in this compiler is a bidirectional one, allowing it to
+perform a somewhat sophisticated type inference. To declare a type to be
+inferenced, use the hole type, written as an underscore _ . For example:
+
+    _ one = 1;
+    _ func = [] -> { return 1; };
+    _ f () { return 1; }
+
+The hole type could be a part of other composite types, namely the array and
+function types.
+
+    _[] foo = new int[10];
+    int -> _ bar = [] (int x) -> { return x; };
+
+As a feat of the bidirectional typechecker, you can specify hole types in many
+occasions where you normally use a "full" type:
+
+    int[] foo = new _[10];
+    int -> int succ = [] (_ x) -> { return x + 1; };
+    _ map (int -> int mapper, int[] array) { ... }
+    _ mapped = map([] (_ x) -> { return x + 1; }, foo);
+
+Note that this typechecker is too young, too simple and sometimes naïve. For
+example, it cannot deduce the types of the following statements despite they
+are obviously well-typed:
+
+    int -> _ f = [] (_ x) -> { return x; };
+    _ f (int x) {
+      if (x < 2) return 1;
+      return f(x - 1) + f(x - 2);
+    }
+
+The typechecker could not handle non-inferenceable statements for sure:
+
+    _ x;
+    _ x = x;
+    _ f () { return f(); }
+
+1.3. Additional Requirements for Functions
+
+The type checker requires all non-void functions to ultimately return a value,
+reporting a compile error when control reaches end of non-void function. For
+example, these functions cannot be typechecked:
+
+    int a () {}
+    int b () {
+      if (false) return 0;
+    }
+
+It performs a basic control flow analysis to check this fact. For example, the
+following function is accepted:
+
+    int f (bool cond) {
+      if (cond) {
+        return 1;
+      } else {
+        return 0;
+      }
+      int useless = 2;
+      // The typechecker knows that the control flow could never reach this
+      // point, so it allows that no value is returned here.
+    }
+
+2. LITERALS
+
+2.1. String Literals
+
+This compiler accepts the following escape sequences in addition to the standard
+ones.
+
+- \' is the single quote U+0027.
+- \b is the backspace character U+0008.
+- \r is the carriage return character U+000D.
+- \t is the tab character U+0009.
+- \f is the form feed U+000C.
+- \v is the vertical tab character U+000B.
+- \0 is the null character U+0000.
+- \$ is the dollar character U+0024.
+- \xHH is the code point U+00HH where HH is two hexadecimal digits (case
+  insensitive, same below).
+- \uHHHH is the code point U+HHHH.
+- \u{H+} is the corresponding code point where H+ is a sequence of at least two
+  hexadecimal digits.
+
+2.2. Integer Literals
+
+This compiler accepts hexadecimal and binary integer literals in addition to
+decimal ones. It also accepts a new grammar for decimal integers.
+
+    1024   // decimal, normal
+    0d1024 // decimal, new syntax
+    0x7fff // hexadecimal
+    0b1010 // binary
+
+The compiler accepts numeric literal separators. Instead of having 1000000000
+(how many zeros are there?), you could have 1'000'000'000. Literals in other
+bases are also accepted, e.g. 0b1100'1000'1001'1000.
+
+3. MISCELLANEOUS
+
+3.1. Whitespaces
+
+This compiler treats these characters as whitespaces:
+
+- U+0020, the standard space.
+- U+0009, the tab character.
+- U+000B, the vertical tab.
+- U+000C, the form feed.
+- U+00A0, the non-breaking space.
+
+3.2. Line Terminators
+
+This compiler treats these characters as line terminators:
+
+- U+0009, the carriage return, aka \r.
+- U+000A, the line feed, aka \n.
+- U+2028, the line separator character.
+- U+2029, the paragraph separator character.
+
+Note that only U+000A (aka \n) is treated as a line terminator in error
+messages due to parser limitations.
+
+3.3. Block Comments
+
+The compiler accepts C++-style block (multiline) comments. No nesting is
+allowed. For example:
+
+    /*
+     * This is a comment block.
+     */

@@ -189,7 +189,7 @@ class TypecheckRecord(val ast: Program) {
         node.alternate?.let { infer(it, EnvironmentRecord(env)) }
         hasNormalCompletion[node] =
           node.test.hasNormalCompletion!! &&
-            (node.consequent.hasNormalCompletion!! || node.alternate?.hasNormalCompletion ?: false)
+            (node.consequent.hasNormalCompletion!! || node.alternate?.hasNormalCompletion ?: true)
         returnTypes[node] = if (node.alternate == null) {
           node.consequent.currentReturnType
         } else {

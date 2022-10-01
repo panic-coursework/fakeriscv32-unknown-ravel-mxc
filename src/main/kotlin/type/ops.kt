@@ -21,7 +21,7 @@ infix fun Type.intersect(other: Type): Type {
       if (other !is MxFunction) return MxBot
       if (this.params.size != other.params.size) return MxBot
       // usually function parameters are not treated this way, but since we have
-      // no subtyping in this type system, so this is fine.
+      // no subtyping in this type system, this is fine.
       val params = this.params.zip(other.params).map { (a, b) -> a intersect b }
       val returnType = this.returnType intersect other.returnType
       return MxFunction(params, returnType)
