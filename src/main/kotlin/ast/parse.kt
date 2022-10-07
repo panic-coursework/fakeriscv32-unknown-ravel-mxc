@@ -3,7 +3,7 @@ package org.altk.lab.mxc.ast
 import org.altk.lab.mxc.MxcInternalError
 import org.altk.lab.mxc.recognizer.MxParser.*
 
-fun parseInt(input: IntegerLiteralContext): Int {
+fun parseInt(ctx: SourceContext, input: IntegerLiteralContext): Int {
   val text = input.text.replace("'", "")
   if (input is IntDecimalContext && text.startsWith("0d")) {
     return text.substring(2).toInt()
@@ -12,26 +12,23 @@ fun parseInt(input: IntegerLiteralContext): Int {
     is IntDecimalContext -> text.toInt()
     is IntHexContext -> text.substring(2).toInt(0x10)
     is IntBinaryContext -> text.substring(2).toInt(0b10)
-    else -> throw MxcInternalError(
-      input.ctx,
-      "Unable to parse int ${input.text}"
-    )
+    else -> throw MxcInternalError(ctx, "Unable to parse int ${input.text}")
   }
 }
 
-fun unescape(input: StringLiteralContext): String {
+fun unescape(ctx: SourceContext, input: StringLiteralContext): String {
   val str = input.text.slice(1 until input.text.length - 1)
   val re =
     Regex("""\\(?:(?<char>[^xXuU])|[xX](?<hex>[0-9a-fA-F]{2})|[uU](?<unicode4>[0-9a-fA-F]{4})|[uU]\{(?<unicodeAny>[0-9a-fA-F]{2,})})""")
   return str.replace(re) { match ->
     val groups = match.groups
     if (groups !is MatchNamedGroupCollection) {
-      throw MxcInternalError(input.ctx, "Unable to parse string")
+      throw MxcInternalError(ctx, "Unable to parse string")
     }
     groups["char"]?.value?.let { unescapeChar(it[0]) }
       ?: (groups["hex"] ?: groups["unicode4"] ?: groups["unicodeAny"])
         ?.value?.let { unescapeHex(it) }
-      ?: throw MxcInternalError(input.ctx, "Unknown escape sequence in $str")
+      ?: throw MxcInternalError(ctx, "Unknown escape sequence in $str")
   }
 }
 

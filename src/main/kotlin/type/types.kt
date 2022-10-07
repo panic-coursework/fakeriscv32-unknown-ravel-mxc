@@ -61,4 +61,5 @@ class MxStruct(val name: String, override val env: EnvironmentRecord) : Type(),
 class MxFunction(val params: List<Type>, val returnType: Type) : Type() {
   override val typeArgs = params + returnType
   override fun toString() = "(${params.joinToString(", ")}) -> $returnType"
+  override val isVoid get() = params.any { it.isVoid }
 }

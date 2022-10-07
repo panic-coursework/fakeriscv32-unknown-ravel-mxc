@@ -1,9 +1,9 @@
 package org.altk.lab.mxc.type
 
 import org.altk.lab.mxc.MxcInternalError
-import org.altk.lab.mxc.SourceContext
 import org.altk.lab.mxc.ReferenceError
 import org.altk.lab.mxc.TypeError
+import org.altk.lab.mxc.ast.SourceContext
 
 enum class Mutability { MUTABLE, IMMUTABLE }
 

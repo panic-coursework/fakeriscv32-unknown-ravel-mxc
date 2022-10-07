@@ -1,11 +1,13 @@
 package org.altk.lab.mxc.recognizer
 
+import org.altk.lab.mxc.ast.Source
 import org.altk.lab.mxc.recognizer.MxParser.ProgramContext
 import org.antlr.v4.runtime.*
-import java.io.InputStream
 import kotlin.system.exitProcess
 
-fun parse(inputStream: InputStream): ProgramContext {
+class ParseRecord(val source: Source, val tree: ProgramContext)
+
+fun parse(source: Source): ParseRecord {
   var hasErrors = false
 
   class ExitListener : BaseErrorListener() {
@@ -23,7 +25,7 @@ fun parse(inputStream: InputStream): ProgramContext {
   }
 
   val listener = ExitListener()
-  val input = CharStreams.fromStream(inputStream)
+  val input = CharStreams.fromString(source.sourceText)
   val lexer = MxLexer(input)
   lexer.removeErrorListeners()
   lexer.addErrorListener(listener)
@@ -34,5 +36,5 @@ fun parse(inputStream: InputStream): ProgramContext {
   if (hasErrors) {
     exitProcess(1)
   }
-  return root
+  return ParseRecord(source, root)
 }

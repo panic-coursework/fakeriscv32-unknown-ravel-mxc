@@ -1,5 +1,6 @@
 package org.altk.lab.mxc
 
+import org.altk.lab.mxc.ast.Source
 import org.altk.lab.mxc.ast.ast
 import org.altk.lab.mxc.ast.injectReturnZeroToMain
 import org.altk.lab.mxc.recognizer.*
@@ -9,16 +10,22 @@ import org.altk.lab.mxc.type.typecheck
 import org.antlr.v4.runtime.*
 import java.io.FileInputStream
 import org.antlr.v4.gui.TestRig
-import java.io.ByteArrayInputStream
 import kotlin.collections.HashSet
 import kotlin.system.exitProcess
 
 fun ojMain() {
-  val program = parse(System.`in`)
-  val tree = injectReturnZeroToMain(ast(program))
-  val rec = typecheck(tree)
-  if (rec.globalEnv.getBinding(null, "main").type != MxFunction(listOf(), MxInt)) {
-    throw TypeError(null, "main function type mismatch")
+  try {
+    val source = Source("stdin", System.`in`.readAllBytes().decodeToString())
+    val program = parse(source)
+    val tree = injectReturnZeroToMain(program.ast())
+    val rec = typecheck(tree)
+    val mainType = MxFunction(listOf(), MxInt)
+    if (rec.globalEnv.getBinding(null, "main").type != mainType) {
+      throw TypeError(null, "main function type mismatch")
+    }
+  } catch (e: MxcError) {
+    e.print()
+    exitProcess(1)
   }
 }
 
@@ -26,36 +33,37 @@ fun main(args: Array<String>) {
   if (args.isEmpty()) {
     error("Usage: app <command> [file]")
   }
+  if (args[0] == "oj") return ojMain()
   val inputStream = if (args.size > 1) {
     FileInputStream(args[1])
   } else {
     System.`in`
   }
-  val sourceText = inputStream.readAllBytes()
-  val sourceLines = sourceText.decodeToString().split('\n')
-  val byteStream = ByteArrayInputStream(sourceText)
+  val sourceText = inputStream.readAllBytes().decodeToString()
+  val filename = if (args.size > 1) basename(args[1]) else "stdin"
+  val source = Source(filename, sourceText)
   when (args[0]) {
     "parse" -> {
-      val program = parse(byteStream)
+      val program = parse(source)
       val rules = MxParser.ruleNames.toList()
-      println(program.toStringTree(rules))
+      println(program.tree.toStringTree(rules))
     }
 
     "ast" -> {
-      val program = parse(byteStream)
+      val program = parse(source)
       try {
-        val tree = ast(program)
+        val tree = program.ast()
         println(tree)
       } catch (e: MxcError) {
-        e.print(sourceLines)
+        e.print()
         exitProcess(1)
       }
     }
 
     "tyck" -> {
-      val program = parse(byteStream)
+      val program = parse(source)
       try {
-        val tree = injectReturnZeroToMain(ast(program))
+        val tree = injectReturnZeroToMain(program.ast())
         val rec = typecheck(tree)
         println("Global bindings:")
         for (binding in rec.globalEnv.bindings) {
@@ -64,13 +72,13 @@ fun main(args: Array<String>) {
         println("")
         println(tree.toString(rec))
       } catch (e: MxcError) {
-        e.print(sourceLines)
+        e.print()
         exitProcess(1)
       }
     }
 
     "testrig" -> {
-      val input = CharStreams.fromStream(byteStream)
+      val input = CharStreams.fromString(sourceText)
       class TestRigClass : TestRig(arrayOf("MxParser", "program", "-gui")) {
         fun invoke (input: CharStream) {
           val lexer = MxLexer(input)
@@ -97,7 +105,7 @@ fun main(args: Array<String>) {
         }
       }
 
-      val input = CharStreams.fromStream(byteStream)
+      val input = CharStreams.fromString(sourceText)
       val lexer = MxLexer(input)
       lexer.removeErrorListeners()
       lexer.addErrorListener(ExitListener())
@@ -139,3 +147,5 @@ fun main(args: Array<String>) {
     else -> error("unknown command ${args[0]}")
   }
 }
+
+private fun basename(path: String) = path.split('/').last()

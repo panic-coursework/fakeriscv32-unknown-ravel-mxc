@@ -1,14 +1,17 @@
 package org.altk.lab.mxc
 
+import org.altk.lab.mxc.ast.SourceContext
+
 open class MxcError(val ctx: SourceContext?, msg: String) : Exception(msg) {
   override fun toString(): String {
-    val msg = super.toString()
+    val className = this::class.simpleName
+    val msg = "$className: $message"
     if (ctx == null) return msg
-    return "In $ctx: $msg"
+    return "In ${ctx.loc}: $msg"
   }
 
-  fun print(sourceLines: List<String>) {
-    if (ctx != null) System.err.println(ctx.format(sourceLines))
+  fun print() {
+    if (ctx != null) System.err.println(ctx.toString())
     printStackTrace(System.err)
   }
 }

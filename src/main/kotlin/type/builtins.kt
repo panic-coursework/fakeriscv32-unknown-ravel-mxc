@@ -1,8 +1,8 @@
 package org.altk.lab.mxc.type
 
-import org.altk.lab.mxc.BuiltinSourceContext
 import org.altk.lab.mxc.ast.BinaryOperator
 import org.altk.lab.mxc.ast.BinaryOperator.*
+import org.altk.lab.mxc.ast.BuiltinSourceContext
 import org.altk.lab.mxc.ast.UnaryOperator
 import org.altk.lab.mxc.ast.UnaryOperator.*
 

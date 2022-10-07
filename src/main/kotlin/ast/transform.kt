@@ -1,7 +1,5 @@
 package org.altk.lab.mxc.ast
 
-import org.altk.lab.mxc.BuiltinSourceContext
-
 fun injectReturnZeroToMain(program: Program) =
   Program(program.ctx, program.body.map { decl ->
     if (decl is FunctionDeclaration && decl.id.name == "main") {
