@@ -69,7 +69,7 @@ open class EnvironmentRecord(val outerEnv: EnvironmentRecord?) {
 class GlobalEnvironmentRecord : EnvironmentRecord(null) {
   fun getType(ctx: SourceContext?, name: String): MxStruct {
     val binding = getBinding(ctx, name) as? TypeBinding
-      ?: throw TypeError(ctx, "'$name' does name a type")
+      ?: throw TypeError(ctx, "'$name' does not name a type")
     return binding.content as? MxStruct
       ?: throw TypeError(ctx, "Type aliases are not allowed")
   }

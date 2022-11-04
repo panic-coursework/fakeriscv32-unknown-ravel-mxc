@@ -3,6 +3,8 @@ package org.altk.lab.mxc
 import org.altk.lab.mxc.ast.Source
 import org.altk.lab.mxc.ast.ast
 import org.altk.lab.mxc.ast.injectReturnZeroToMain
+import org.altk.lab.mxc.ir.Module
+import org.altk.lab.mxc.ir.prelude
 import org.altk.lab.mxc.recognizer.*
 import org.altk.lab.mxc.type.MxFunction
 import org.altk.lab.mxc.type.MxInt
@@ -75,6 +77,10 @@ fun main(args: Array<String>) {
         e.print()
         exitProcess(1)
       }
+    }
+
+    "ir" -> {
+      println(Module(prelude).text)
     }
 
     "testrig" -> {
