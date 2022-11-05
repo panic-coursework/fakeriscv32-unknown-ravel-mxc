@@ -1,7 +1,7 @@
 package org.altk.lab.mxc.ir
 
 private val simpleIdentifier = Regex("""[\-a-zA-Z$._][\-a-zA-Z$._0-9]*""")
-fun escapeIdentifier(id: String): String = if (id.matches(simpleIdentifier)) {
+fun escapeIdentifier(id: String) = if (id.matches(simpleIdentifier)) {
   id
 } else {
   "\"${id.replace("\\", "\\5c").replace("\"", "\\22")}\""

@@ -1,12 +1,15 @@
 package org.altk.lab.mxc.type
 
-import org.altk.lab.mxc.*
-import org.altk.lab.mxc.ast.Node as AstNode
+import org.altk.lab.mxc.MxcInternalError
+import org.altk.lab.mxc.ReferenceError
+import org.altk.lab.mxc.SyntaxError
+import org.altk.lab.mxc.TypeError
 import org.altk.lab.mxc.ast.*
+import org.altk.lab.mxc.ast.Node as AstNode
 
 fun typecheck(ast: Program) = TypecheckRecord(ast)
 
-class TypecheckRecord(val ast: Program) {
+open class TypecheckRecord(val ast: Program) {
   val globalEnv = createGlobalEnv()
   val envs = HashMap<AstNode, EnvironmentRecord>()
   val types = HashMap<Expression, Type>()
@@ -28,12 +31,12 @@ class TypecheckRecord(val ast: Program) {
     collectGlobals()
   }
 
-  private val AstNode.env get() = envs[this]
-  private val Expression.currentType get() = types[this] ?: MxHole
-  private val Statement.currentReturnType get() = returnTypes[this] ?: MxBot
-  private val AstNode.hasNormalCompletion
+  open protected val AstNode.env get() = envs[this]
+  protected val Expression.currentType get() = types[this] ?: MxHole
+  protected val Statement.currentReturnType get() = returnTypes[this] ?: MxBot
+  protected val AstNode.hasNormalCompletion
     get() = this@TypecheckRecord.hasNormalCompletion[this]
-  private val LeftHandSideExpression.assignable
+  protected val LeftHandSideExpression.assignable
     get() = this@TypecheckRecord.assignable[this]
 
   private fun LeftHandSideExpression.checkAssignable() {
@@ -47,8 +50,8 @@ class TypecheckRecord(val ast: Program) {
   private fun Expression.checkCompleteness() =
     currentType.checkCompleteness(ctx)
 
-  private val classes get() = ast.body.filterIsInstance<ClassDeclaration>()
-  private val functions get() = ast.body.filterIsInstance<FunctionDeclaration>()
+  protected val classes get() = ast.body.filterIsInstance<ClassDeclaration>()
+  protected val functions get() = ast.body.filterIsInstance<FunctionDeclaration>()
 
   private fun collectTypes() {
     for (class_ in classes) {
@@ -102,6 +105,12 @@ class TypecheckRecord(val ast: Program) {
       is FunctionDeclaration -> collectFunctionDeclaration(node, globalEnv)
       is ClassDeclaration -> {
         val classEnv = node.env!!
+        if (node.body.count { it is ConstructorDeclaration } > 1) {
+          throw ReferenceError(
+            node.ctx,
+            "Class contains more than one constructor",
+          )
+        }
         for (decl in node.body) when (decl) {
           is VariableDeclaration -> Unit
           is FunctionDeclaration -> collectFunctionDeclaration(decl, classEnv)

@@ -1,8 +1,8 @@
 package org.altk.lab.mxc
 
+import org.altk.lab.mxc.ast.InjectReturnZeroToMain
 import org.altk.lab.mxc.ast.Source
 import org.altk.lab.mxc.ast.ast
-import org.altk.lab.mxc.ast.injectReturnZeroToMain
 import org.altk.lab.mxc.ir.Module
 import org.altk.lab.mxc.ir.prelude
 import org.altk.lab.mxc.recognizer.*
@@ -19,7 +19,7 @@ fun ojMain() {
   try {
     val source = Source("stdin", System.`in`.readAllBytes().decodeToString())
     val program = parse(source)
-    val tree = injectReturnZeroToMain(program.ast())
+    val tree = InjectReturnZeroToMain().transform(program.ast())
     val rec = typecheck(tree)
     val mainType = MxFunction(listOf(), MxInt)
     if (rec.globalEnv.getBinding(null, "main").type != mainType) {
@@ -65,7 +65,7 @@ fun main(args: Array<String>) {
     "tyck" -> {
       val program = parse(source)
       try {
-        val tree = injectReturnZeroToMain(program.ast())
+        val tree = InjectReturnZeroToMain().transform(program.ast())
         val rec = typecheck(tree)
         println("Global bindings:")
         for (binding in rec.globalEnv.bindings) {

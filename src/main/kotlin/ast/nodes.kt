@@ -76,7 +76,13 @@ class ClassDeclaration(
   ctx: SourceContext,
   val id: Identifier,
   val body: List<ClassElement>,
-) : Node(ctx), ProgramItem
+) : Node(ctx), ProgramItem {
+  val constructor get(): ConstructorDeclaration? {
+    val ctor = body.filterIsInstance<ConstructorDeclaration>()
+    if (ctor.isEmpty()) return null
+    return ctor[0]
+  }
+}
 
 class ConstructorDeclaration(
   ctx: SourceContext,
