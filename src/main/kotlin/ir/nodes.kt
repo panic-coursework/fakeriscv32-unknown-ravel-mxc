@@ -1,8 +1,6 @@
 package org.altk.lab.mxc.ir
 
 import org.altk.lab.mxc.MxcInternalError
-import org.altk.lab.mxc.type.*
-import org.altk.lab.mxc.type.Type as AstType
 
 sealed interface Node {
   val text: String
@@ -24,11 +22,20 @@ class IntegerLiteral(val value: Int) : Operand {
   override val text get() = value.toString()
 }
 
-class StringLiteral(val value: String) : Operand {
+class StringLiteral(val content: ByteArray) : Operand {
   override val text
-    get() = "[ ${
-      value.split("").joinToString(", ") { "i8 ${it.codePointAt(0)}" }
-    } ]"
+    get() = "[ ${content.joinToString(", ") { "i8 $it" }}, i8 0 ]"
+  val value get() = Value(this, ArrayType(CharType, content.size + 1))
+}
+
+object NullLiteral : Operand {
+  override val text get() = "null"
+}
+
+class AggregateLiteral(val values: List<Value<*>>) :
+  Operand {
+  override val text
+    get() = "{ ${values.joinToString(", ") { it.text }} }"
 }
 
 class Undef : Operand {
@@ -70,6 +77,12 @@ class LocalUnnamedIdentifier(id: Int) : LocalIdentifier, UnnamedIdentifier(id)
 
 open class Value<out T : Type>(val operand: Operand, val type: T) : Node {
   override val text get() = "${type.text} ${operand.text}"
+  inline fun <reified U : Type> asType(): Value<U> {
+    if (type !is U) {
+      throw MxcInternalError(null, "wrong ir operand type, got $type")
+    }
+    return Value(operand, type)
+  }
 }
 
 fun valueOf(operand: Operand, type: Type): Value<*> = when (type) {
@@ -94,14 +107,17 @@ sealed interface DereferencableType : Type {
   fun deref(index: Int): Type
 }
 
-sealed class IntType(val length: Int) : PrimitiveType("i$length")
+sealed interface ComparableType : Type
+sealed class IntType(val length: Int) : PrimitiveType("i$length"),
+  ComparableType
+
 object Int32Type : IntType(32)
 object CharType : IntType(8)
 object BoolType : IntType(1)
 object VoidType : PrimitiveType("void")
 object LabelType : PrimitiveType("label")
 open class PointerType(val pointee: Type?) : PrimitiveType("ptr"),
-  DereferencableType {
+  DereferencableType, ComparableType {
   override fun deref(index: Int) = pointee!!
 }
 
@@ -115,15 +131,21 @@ open class AggregateType(val subtypes: List<Type>) : Type, DereferencableType {
   override fun deref(index: Int) = subtypes[index]
 }
 
+class MxStructType(
+  val id: LocalNamedIdentifier,
+  subtypes: List<Type>,
+  val indexFromName: Map<String, Int>,
+) : PointerType(AggregateType(subtypes))
+
 class FunctionType(val params: List<Type>, val returnType: Type) : Type {
   override val text
     get() = "${returnType.text} (${params.joinToString(", ") { it.text }})"
 }
 
-class MxArrayType(val content: Type) :
-  AggregateType(listOf(Int32Type, PointerType(content)))
+open class MxArrayType(val content: Type) :
+  PointerType(AggregateType(listOf(Int32Type, ArrayType(content, 0))))
 
-object MxStringType : AggregateType(listOf(Int32Type, PointerType(CharType)))
+object MxStringType : MxArrayType(CharType)
 
 class MxClosureType(val params: List<Type>, val returnType: Type) :
   AggregateType(
@@ -131,22 +153,7 @@ class MxClosureType(val params: List<Type>, val returnType: Type) :
     listOf(PointerType(null), PointerType(FunctionType(params, returnType)))
   )
 
-class Label(id: LocalNamedIdentifier) : Value<LabelType>(id, LabelType)
-
-
-val AstType.ir: Type
-  get() = when (this) {
-    MxInt -> Int32Type
-    MxNullptr -> PointerType(null)
-    MxString -> MxStringType
-    is MxFunction -> MxClosureType(params.map { it.ir }, returnType.ir)
-    is MxStruct -> PointerType(LocalNamedIdentifier("struct.$name"))
-    is MxArray -> MxArrayType(content.ir)
-    MxBool -> BoolType
-    MxVoid -> VoidType
-    MxBot, MxTop, MxHole, MxType ->
-      throw MxcInternalError(null, "Unexpected type $this")
-  }
+class Label(id: LocalIdentifier) : Value<LabelType>(id, LabelType)
 
 
 sealed interface ModuleItem : Node
@@ -158,9 +165,9 @@ class Module(val body: List<ModuleItem>) : Node {
 
 class GlobalVariableDeclaration(
   val id: GlobalIdentifier,
-  val type: Type,
+  val value: Value<*>,
 ) : ModuleItem {
-  override val text get() = "${id.text} = global ${type.text}"
+  override val text get() = "${id.text} = global ${value.text}"
 }
 
 class TypeDeclaration(
@@ -180,16 +187,16 @@ class FunctionDeclaration(
 }
 
 class BasicBlock(
-  val label: LocalIdentifier,
+  val label: Label,
   val body: List<Instruction>,
 ) : Node {
-  override val text get() = "${label.text}:\n${bodyText}"
+  override val text get() = "${(label.operand as Identifier).escapedName}:\n${bodyText}"
   private val bodyText get() = indent(body.joinToString("\n") { it.text })
 }
 
 class FunctionDefinition(
   val id: GlobalNamedIdentifier,
-  val params: List<Type>,
+  val params: List<Value<*>>,
   val returnType: Type,
   val body: List<BasicBlock>,
 ) : ModuleItem {
@@ -234,10 +241,11 @@ sealed class BinaryOperation(
   val lhs: Value<*>,
   val rhs: Value<*>,
   val op: String,
-  type: Type,
-) : Operation(result, type) {
+  val operandType: Type,
+  val resultType: Type = operandType,
+) : Operation(result, resultType) {
   override val text
-    get() = "${result.text} = $op ${type.text} ${lhs.operand.text}, ${rhs.operand.text}"
+    get() = "${result.text} = $op ${operandType.text} ${lhs.operand.text}, ${rhs.operand.text}"
 }
 
 class Int32BinaryOperation(
@@ -249,18 +257,7 @@ class Int32BinaryOperation(
   enum class Op {
     ADD, SUB, MUL, UDIV, SDIV, UREM, SREM, SHL, LSHR, ASHR;
 
-    override fun toString() = when (this) {
-      ADD -> "add"
-      SUB -> "sub"
-      MUL -> "mul"
-      UDIV -> "udiv"
-      SDIV -> "sdiv"
-      UREM -> "urem"
-      SREM -> "srem"
-      SHL -> "shl"
-      LSHR -> "lshr"
-      ASHR -> "ashr"
-    }
+    override fun toString() = name.lowercase()
   }
 }
 
@@ -285,25 +282,14 @@ class IntBinaryOperation(
 class Icmp(
   result: LocalIdentifier,
   val cond: Condition,
-  type: IntType,
-  lhs: Value<IntType>,
-  rhs: Value<IntType>,
-) : BinaryOperation(result, lhs, rhs, "icmp $cond", type) {
+  type: ComparableType,
+  lhs: Value<ComparableType>,
+  rhs: Value<ComparableType>,
+) : BinaryOperation(result, lhs, rhs, "icmp $cond", type, BoolType) {
   enum class Condition {
     EQ, NE, UGT, UGE, ULT, ULE, SGT, SGE, SLT, SLE;
 
-    override fun toString() = when (this) {
-      EQ -> "eq"
-      NE -> "ne"
-      UGT -> "ugt"
-      UGE -> "uge"
-      ULT -> "ult"
-      ULE -> "ule"
-      SGT -> "sgt"
-      SGE -> "sge"
-      SLT -> "slt"
-      SLE -> "sle"
-    }
+    override fun toString() = name.lowercase()
   }
 }
 
@@ -342,6 +328,26 @@ class Call(
   }
 }
 
+class CallVoid(val function: Value<FunctionType>, val args: List<Value<*>>) :
+  Instruction {
+  private val argsText get() = args.joinToString(", ") { it.text }
+  override val text: String
+    get() = "call void ${function.operand.text}(${argsText})"
+
+  init {
+    val actual = args.map { it.type }
+    val expected = function.type.params
+    val typeError = actual.size != expected.size || actual.zip(expected)
+      .any { it.first != it.second }
+    if (typeError) {
+      throw MxcInternalError(
+        null,
+        "call instruction type mismatch, got $actual, expecting $expected",
+      )
+    }
+  }
+}
+
 
 class ExtractValue(
   result: LocalIdentifier,
@@ -363,9 +369,9 @@ class InsertValue(
 }
 
 
-class Alloca(result: LocalIdentifier, type: Type) :
-  Operation(result, PointerType(type)) {
-  override val text get() = "${result.text} = alloca ${type.text}"
+class Alloca(result: LocalIdentifier, val content: Type) :
+  Operation(result, PointerType(content)) {
+  override val text get() = "${result.text} = alloca ${content.text}"
 }
 
 class Load(result: LocalIdentifier, val target: Value<PointerType>) :
@@ -378,18 +384,35 @@ class Store(val target: Operand, val content: Value<*>) : Instruction {
   override val text get() = "store ${content.text}, ptr ${target.text}"
 }
 
+sealed interface GepIndex {
+  val text: String
+}
+
+data class GepIndexLiteral(val index: Int) : GepIndex {
+  override val text get() = "i32 $index"
+}
+
+data class GepIndexValue(val index: Value<Int32Type>) : GepIndex {
+  override val text get() = index.text
+}
+
 class GetElementPtr(
   result: LocalIdentifier,
   val target: Value<DereferencableType>,
-  val indices: List<Int>
+  val indices: List<GepIndex>
 ) : Operation(
   result,
-  indices.fold<Int, Type>(target.type) { ty, i ->
-    (ty as DereferencableType).deref(i)
-  }) {
+  PointerType(indices.fold<GepIndex, Type>(target.type) { ty, i ->
+    when (i) {
+      is GepIndexLiteral -> (ty as DereferencableType).deref(i.index)
+      is GepIndexValue -> (ty as PointerType).pointee!!
+    }
+  })
+) {
+  private val derefedType = target.type.deref(0)
   override val text
     get() =
-      "${result.text} = getelementptr inbounds ${target.type.text}, ptr ${target.operand.text}, ${
-        indices.joinToString(", ") { "i32 $it" }
+      "${result.text} = getelementptr inbounds ${derefedType.text}, ptr ${target.operand.text}, ${
+        indices.joinToString(", ") { it.text }
       }"
 }

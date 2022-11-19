@@ -31,7 +31,7 @@ open class TypecheckRecord(val ast: Program) {
     collectGlobals()
   }
 
-  open protected val AstNode.env get() = envs[this]
+  protected open val AstNode.env get() = envs[this]
   protected val Expression.currentType get() = types[this] ?: MxHole
   protected val Statement.currentReturnType get() = returnTypes[this] ?: MxBot
   protected val AstNode.hasNormalCompletion
@@ -133,10 +133,12 @@ open class TypecheckRecord(val ast: Program) {
     env: EnvironmentRecord,
   ) {
     val functionEnv = FunctionEnvironmentRecord(env)
+    envs[node] = functionEnv
     val params = node.params.map {
       val ty = it.typeId.resolve(functionEnv)
       val binding = Binding(it.ctx, it.id.name, ty, Mutability.MUTABLE)
       functionEnv.createBinding(binding)
+      references[it.id] = ReferenceRecord(functionEnv, binding)
       ty
     }
     infer(node.body, functionEnv)
@@ -264,6 +266,7 @@ open class TypecheckRecord(val ast: Program) {
         for (decl in node.declarations) {
           val binding = Binding(decl.ctx, decl.id.name, ty, Mutability.MUTABLE)
           env.createBinding(binding)
+          references[decl.id] = ReferenceRecord(env, binding)
         }
       }
     }

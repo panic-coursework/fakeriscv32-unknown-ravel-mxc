@@ -1,18 +1,17 @@
 package org.altk.lab.mxc
 
-import org.altk.lab.mxc.ast.InjectReturnZeroToMain
-import org.altk.lab.mxc.ast.Source
-import org.altk.lab.mxc.ast.ast
-import org.altk.lab.mxc.ir.Module
-import org.altk.lab.mxc.ir.prelude
-import org.altk.lab.mxc.recognizer.*
+import org.altk.lab.mxc.ast.*
+import org.altk.lab.mxc.ir.IrGenerationContext
+import org.altk.lab.mxc.recognizer.MxLexer
+import org.altk.lab.mxc.recognizer.MxParser
+import org.altk.lab.mxc.recognizer.MxParserBaseVisitor
+import org.altk.lab.mxc.recognizer.parse
 import org.altk.lab.mxc.type.MxFunction
 import org.altk.lab.mxc.type.MxInt
 import org.altk.lab.mxc.type.typecheck
+import org.antlr.v4.gui.TestRig
 import org.antlr.v4.runtime.*
 import java.io.FileInputStream
-import org.antlr.v4.gui.TestRig
-import kotlin.collections.HashSet
 import kotlin.system.exitProcess
 
 fun ojMain() {
@@ -80,13 +79,30 @@ fun main(args: Array<String>) {
     }
 
     "ir" -> {
-      println(Module(prelude).text)
+      val program = parse(source)
+      try {
+        val transformers = listOf(
+          InjectReturnZeroToMain(),
+          MoveGlobalVarsToMain(),
+          GenerateEmptyConstructors(),
+          DesugarConstructors(),
+          DesugarMultiDimensionalNewExpressions(),
+        )
+        val raw = program.ast()
+        val tree = transformers.fold(raw) { ast, trans -> trans.transform(ast) }
+        val ir = IrGenerationContext(tree).ir()
+        println(ir.text)
+      } catch (e: MxcError) {
+        e.print()
+        exitProcess(1)
+      }
     }
 
     "testrig" -> {
       val input = CharStreams.fromString(sourceText)
+
       class TestRigClass : TestRig(arrayOf("MxParser", "program", "-gui")) {
-        fun invoke (input: CharStream) {
+        fun invoke(input: CharStream) {
           val lexer = MxLexer(input)
           val tokens = CommonTokenStream(lexer)
           val parser = MxParser(tokens)

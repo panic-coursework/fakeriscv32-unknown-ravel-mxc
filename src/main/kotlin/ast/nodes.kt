@@ -175,11 +175,16 @@ class ComputedMemberExpression(
   val prop: Expression,
 ) : LeftHandSideExpression(ctx)
 
+sealed interface UpdateExpression {
+  val operator: UpdateOperator
+  val argument: LeftHandSideExpression
+}
+
 class PrefixUpdateExpression(
   ctx: SourceContext,
-  val operator: UpdateOperator,
-  val argument: LeftHandSideExpression,
-) : LeftHandSideExpression(ctx)
+  override val operator: UpdateOperator,
+  override val argument: LeftHandSideExpression,
+) : LeftHandSideExpression(ctx), UpdateExpression
 
 class CallExpression(
   ctx: SourceContext,
@@ -189,9 +194,9 @@ class CallExpression(
 
 class PostfixUpdateExpression(
   ctx: SourceContext,
-  val operator: UpdateOperator,
-  val argument: LeftHandSideExpression,
-) : Expression(ctx)
+  override val operator: UpdateOperator,
+  override val argument: LeftHandSideExpression,
+) : Expression(ctx), UpdateExpression
 
 class UnaryExpression(
   ctx: SourceContext,
@@ -271,6 +276,8 @@ enum class BinaryOperator {
   BIT_AND, BIT_OR, BIT_XOR,
   AND, OR,
   ;
+
+  override fun toString() = this.name.lowercase()
 
   companion object {
     fun from(input: String): BinaryOperator = when (input) {

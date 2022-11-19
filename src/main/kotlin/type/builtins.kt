@@ -41,7 +41,8 @@ fun createGlobalEnv() = GlobalEnvironmentRecord()
 
 val BinaryOperator.operandTypes
   get() = when (this) {
-    LE, GE, LT, GT, EQ, NE -> setOf(MxInt, MxString, MxBool)
+    LE, GE, LT, GT -> setOf(MxInt, MxString)
+    EQ, NE -> setOf(MxInt, MxString, MxBool)
     ADD -> setOf(MxInt, MxString)
     SUB, MUL, DIV, REM, SHL, SHR, BIT_AND, BIT_OR, BIT_XOR -> setOf(MxInt)
     AND, OR -> setOf(MxBool)
@@ -54,8 +55,8 @@ fun BinaryOperator.resultType(operandType: Type) = when (this) {
 
 val BinaryOperator.isEquivalenceOp
   get() = when (this) {
-    LE, GE, LT, GT, EQ, NE -> true
-    ADD, SUB, MUL, DIV, REM, SHL, SHR, AND, OR, BIT_AND, BIT_OR, BIT_XOR -> false
+    EQ, NE -> true
+    else -> false
   }
 
 val UnaryOperator.operandType

@@ -271,16 +271,14 @@ class MoveGlobalVarsToMain : Transformer() {
   override fun transform(node: Program) =
     Program(node.ctx, node.body.map { decl ->
       if (decl is VariableDeclaration) {
-        VariableDeclaration(decl.ctx, decl.typeId, decl.declarations.map { v ->
-          VariableDeclarator(v.ctx, v.id, null)
-        })
-      } else if (decl is FunctionDeclaration && decl.id.name == "main") {
-        FunctionDeclaration(
-          decl.ctx, Identifier(decl.id.ctx, "mx.main"), decl.params,
-          decl.returnType, decl.body,
-        )
+        VariableDeclaration(
+          decl.ctx,
+          transform(decl.typeId),
+          decl.declarations.map { v ->
+            transform(VariableDeclarator(v.ctx, v.id, null))
+          })
       } else {
-        decl
+        transform(decl)
       }
     } + getGlobalVarsMain(node))
 
@@ -330,5 +328,155 @@ class GenerateEmptyConstructors : Transformer() {
         BlockStatement(BuiltinSourceContext, listOf()),
       )
       ClassDeclaration(node.ctx, node.id, node.body + ctor)
+    }
+}
+
+class DesugarMultiDimensionalNewExpressions : Transformer() {
+  val extraFunctions = mutableListOf<FunctionDeclaration>()
+
+  override fun transform(node: Program) = Program(
+    node.ctx,
+    node.body.map { transform(it) } + extraFunctions,
+  )
+
+  override fun transform(node: Expression) =
+    if (node is NewExpression && node.typeId is NewArrayType && node.typeId.typeId is NewArrayType) {
+      fun baseType(ty: TypeId): TypeId =
+        (ty as? NewArrayType)?.let {
+          ArrayType(BuiltinSourceContext, baseType(it.typeId))
+        } ?: ty
+
+      fun forStatement(ty: NewArrayType, depth: Int): ForStatement =
+        ForStatement(
+          BuiltinSourceContext,
+          VariableDeclaration(
+            BuiltinSourceContext,
+            IntType(BuiltinSourceContext),
+            listOf(
+              VariableDeclarator(
+                BuiltinSourceContext,
+                Identifier(BuiltinSourceContext, "i$depth"),
+                IntegerLiteral(BuiltinSourceContext, 0),
+              ),
+            ),
+          ),
+          BinaryExpression(
+            BuiltinSourceContext,
+            BinaryOperator.LT,
+            Identifier(BuiltinSourceContext, "i$depth"),
+            Identifier(BuiltinSourceContext, "n$depth"),
+          ),
+          PrefixUpdateExpression(
+            BuiltinSourceContext,
+            UpdateOperator.INC,
+            Identifier(BuiltinSourceContext, "i$depth"),
+          ),
+          BlockStatement(
+            BuiltinSourceContext,
+            listOf(
+              VariableDeclaration(
+                BuiltinSourceContext,
+                HoleType(BuiltinSourceContext),
+                listOf(
+                  VariableDeclarator(
+                    BuiltinSourceContext,
+                    Identifier(BuiltinSourceContext, "a${depth + 1}"),
+                    NewExpression(
+                      BuiltinSourceContext,
+                      NewArrayType(
+                        BuiltinSourceContext,
+                        baseType(ty.typeId),
+                        Identifier(BuiltinSourceContext, "n${depth + 1}"),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              ExpressionStatement(
+                BuiltinSourceContext,
+                AssignmentExpression(
+                  BuiltinSourceContext,
+                  ComputedMemberExpression(
+                    BuiltinSourceContext,
+                    Identifier(BuiltinSourceContext, "a$depth"),
+                    Identifier(BuiltinSourceContext, "n$depth"),
+                  ),
+                  Identifier(BuiltinSourceContext, "a${depth + 1}"),
+                ),
+              ),
+            ) + if (ty.typeId is NewArrayType) {
+              listOf(forStatement(ty.typeId, depth + 1))
+            } else {
+              listOf()
+            },
+          ),
+        )
+
+      val topLevelNew = VariableDeclaration(
+        BuiltinSourceContext,
+        HoleType(BuiltinSourceContext),
+        listOf(
+          VariableDeclarator(
+            BuiltinSourceContext,
+            Identifier(BuiltinSourceContext, "a0"),
+            NewExpression(
+              BuiltinSourceContext,
+              NewArrayType(
+                BuiltinSourceContext,
+                baseType(node.typeId.typeId),
+                Identifier(BuiltinSourceContext, "n0"),
+              ),
+            ),
+          ),
+        ),
+      )
+      val ret = ReturnStatement(
+        BuiltinSourceContext,
+        Identifier(BuiltinSourceContext, "a0"),
+      )
+
+      fun arguments(ty: NewArrayType): List<Expression> =
+        listOf(ty.length) + ((ty.typeId as? NewArrayType)?.let { arguments(ty.typeId) }
+          ?: listOf())
+
+      val name = "new.${extraFunctions.size}"
+      val args = arguments(node.typeId)
+      val body = listOf(topLevelNew) + forStatement(node.typeId.typeId, 0) + ret
+      val func = FunctionDeclaration(
+        BuiltinSourceContext,
+        Identifier(BuiltinSourceContext, name),
+        List(args.size) { i ->
+          FunctionParameter(
+            BuiltinSourceContext,
+            Identifier(BuiltinSourceContext, "n$i"),
+            IntType(BuiltinSourceContext),
+          )
+        },
+        baseType(node.typeId),
+        BlockStatement(BuiltinSourceContext, body),
+      )
+      extraFunctions.add(func)
+      CallExpression(
+        BuiltinSourceContext,
+        Identifier(BuiltinSourceContext, name),
+        args,
+      )
+    } else {
+      node
+    }
+}
+
+class DesugarConstructors : Transformer() {
+  override fun transform(node: ClassElement) =
+    if (node is ConstructorDeclaration) {
+      FunctionDeclaration(
+        node.ctx,
+        Identifier(node.id.ctx, "(init)"),
+        listOf(),
+        VoidType(BuiltinSourceContext),
+        node.body,
+      )
+    } else {
+      node
     }
 }

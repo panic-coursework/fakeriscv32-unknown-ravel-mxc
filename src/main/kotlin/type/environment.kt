@@ -23,6 +23,10 @@ class TypeBinding(ctx: SourceContext?, name: String, val content: Type) :
 class ReferenceRecord(val env: EnvironmentRecord, val binding: Binding) {
   val isGlobal: Boolean
     get() = env is GlobalEnvironmentRecord
+
+  override fun hashCode() = 31 * env.hashCode() + binding.name.hashCode()
+  override fun equals(other: Any?) =
+    other is ReferenceRecord && other.env == env && other.binding.name == binding.name
 }
 
 open class EnvironmentRecord(val outerEnv: EnvironmentRecord?) {
