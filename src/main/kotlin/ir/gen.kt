@@ -81,6 +81,7 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
 
     fun registerEnv(env: EnvironmentRecord) {
       env.bindings.values
+        .sortedBy { it.name }
         .map { ReferenceRecord(env, it) }
         .forEach { registerReference(it) }
     }

@@ -143,9 +143,9 @@ class MxStructType(
   val indexFromName: Map<String, Int>,
 ) : PointerType(AggregateType(subtypes))
 
-class FunctionType(val params: List<Type>, val returnType: Type) : Type {
+class FunctionType(val args: List<Type>, val returnType: Type) : Type {
   override val text
-    get() = "${returnType.text} (${params.joinToString(", ") { it.text }})"
+    get() = "${returnType.text} (${args.joinToString(", ") { it.text }})"
 }
 
 open class MxArrayType(val content: Type) :
@@ -153,10 +153,10 @@ open class MxArrayType(val content: Type) :
 
 object MxStringType : MxArrayType(CharType)
 
-class MxClosureType(val params: List<Type>, val returnType: Type) :
+class MxClosureType(val args: List<Type>, val returnType: Type) :
   AggregateType(
     // TODO: capture type
-    listOf(PointerType(null), PointerType(FunctionType(params, returnType)))
+    listOf(PointerType(null), PointerType(FunctionType(args, returnType)))
   )
 
 class Label(id: LocalIdentifier) : Value<LabelType>(id, LabelType)
@@ -185,11 +185,11 @@ class TypeDeclaration(
 
 class FunctionDeclaration(
   val id: GlobalNamedIdentifier,
-  val params: List<Type>,
+  val args: List<Type>,
   val returnType: Type,
 ) : ModuleItem {
   override val text
-    get() = "declare ${returnType.text} ${id.text} (${params.joinToString(", ") { it.text }})"
+    get() = "declare ${returnType.text} ${id.text} (${args.joinToString(", ") { it.text }})"
 }
 
 class BasicBlock(
@@ -202,12 +202,12 @@ class BasicBlock(
 
 class FunctionDefinition(
   val id: GlobalNamedIdentifier,
-  val params: List<Value<*>>,
+  val args: List<Value<*>>,
   val returnType: Type,
   val body: List<BasicBlock>,
 ) : ModuleItem {
   override val text
-    get() = "define ${returnType.text} ${id.text} (${params.joinToString(", ") { it.text }}) {\n${bodyText}\n}"
+    get() = "define ${returnType.text} ${id.text} (${args.joinToString(", ") { it.text }}) {\n${bodyText}\n}"
   private val bodyText get() = body.joinToString("\n\n") { it.text }
 }
 
@@ -268,7 +268,8 @@ class Int32BinaryOperation(
   rhs: Value<Int32Type>,
 ) : BinaryOperation(result, lhs, rhs, opType.toString(), Int32Type) {
   enum class Op {
-    ADD, SUB, MUL, UDIV, SDIV, UREM, SREM, SHL, LSHR, ASHR;
+    ADD, SUB, MUL, SDIV, SREM, SHL, ASHR;
+    // UDIV, UREM, LSHR
 
     override fun toString() = name.lowercase()
   }
@@ -300,7 +301,8 @@ class Icmp(
   rhs: Value<ComparableType>,
 ) : BinaryOperation(result, lhs, rhs, "icmp $cond", paramType, BoolType) {
   enum class Condition {
-    EQ, NE, UGT, UGE, ULT, ULE, SGT, SGE, SLT, SLE;
+    EQ, NE, SGT, SGE, SLT, SLE;
+    // UGT, UGE, ULT, ULE
 
     override fun toString() = name.lowercase()
   }
@@ -329,7 +331,7 @@ class Call(
 
   init {
     val actual = args.map { it.type }
-    val expected = function.type.params
+    val expected = function.type.args
     val typeError = actual.size != expected.size
     if (typeError) {
       throw MxcInternalError(
@@ -348,7 +350,7 @@ class CallVoid(val function: Value<FunctionType>, val args: List<Value<*>>) :
 
   init {
     val actual = args.map { it.type }
-    val expected = function.type.params
+    val expected = function.type.args
     val typeError = actual.size != expected.size
     if (typeError) {
       throw MxcInternalError(

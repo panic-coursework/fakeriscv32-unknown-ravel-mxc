@@ -1,16 +1,17 @@
 package org.altk.lab.mxc
 
 import org.altk.lab.mxc.ast.*
+import org.altk.lab.mxc.codegen.CodegenContext
 import org.altk.lab.mxc.ir.IrGenerationContext
+import org.altk.lab.mxc.ir.Module
 import org.altk.lab.mxc.recognizer.MxLexer
 import org.altk.lab.mxc.recognizer.MxParser
 import org.altk.lab.mxc.recognizer.MxParserBaseVisitor
 import org.altk.lab.mxc.recognizer.parse
-import org.altk.lab.mxc.type.MxFunction
-import org.altk.lab.mxc.type.MxInt
 import org.altk.lab.mxc.type.typecheck
 import org.antlr.v4.gui.TestRig
 import org.antlr.v4.runtime.*
+import java.io.File
 import java.io.FileInputStream
 import kotlin.system.exitProcess
 
@@ -18,12 +19,22 @@ fun ojMain() {
   try {
     val source = Source("stdin", System.`in`.readAllBytes().decodeToString())
     val program = parse(source)
-    val tree = InjectReturnZeroToMain().transform(program.ast())
-    val rec = typecheck(tree)
-    val mainType = MxFunction(listOf(), MxInt)
-    if (rec.globalEnv.getBinding(null, "main").type != mainType) {
-      throw TypeError(null, "main function type mismatch")
-    }
+    val transformers = listOf(
+      InjectReturnZeroToMain(),
+      MoveGlobalVarsToMain(),
+      GenerateEmptyConstructors(),
+      DesugarConstructors(),
+      DesugarMultiDimensionalNewExpressions(),
+      DesugarClassFields(),
+    )
+    val raw = program.ast()
+    val tree = transformers.fold(raw) { ast, trans -> trans.transform(ast) }
+    val ir = IrGenerationContext(tree).ir()
+    val code = CodegenContext("stdin", ir).asm().text
+    File("output.s").writeText(code)
+    val builtin =
+      ir.javaClass.classLoader.getResource("builtins.s")!!.readBytes()
+    File("builtin.s").writeBytes(builtin)
   } catch (e: MxcError) {
     e.print()
     exitProcess(1)
@@ -43,6 +54,22 @@ fun main(args: Array<String>) {
   val sourceText = inputStream.readAllBytes().decodeToString()
   val filename = if (args.size > 1) basename(args[1]) else "stdin"
   val source = Source(filename, sourceText)
+
+  fun ir(): Module {
+    val program = parse(source)
+    val transformers = listOf(
+      InjectReturnZeroToMain(),
+      MoveGlobalVarsToMain(),
+      GenerateEmptyConstructors(),
+      DesugarConstructors(),
+      DesugarMultiDimensionalNewExpressions(),
+      DesugarClassFields(),
+    )
+    val raw = program.ast()
+    val tree = transformers.fold(raw) { ast, trans -> trans.transform(ast) }
+    return IrGenerationContext(tree).ir()
+  }
+
   when (args[0]) {
     "parse" -> {
       val program = parse(source)
@@ -79,20 +106,17 @@ fun main(args: Array<String>) {
     }
 
     "ir" -> {
-      val program = parse(source)
       try {
-        val transformers = listOf(
-          InjectReturnZeroToMain(),
-          MoveGlobalVarsToMain(),
-          GenerateEmptyConstructors(),
-          DesugarConstructors(),
-          DesugarMultiDimensionalNewExpressions(),
-          DesugarClassFields(),
-        )
-        val raw = program.ast()
-        val tree = transformers.fold(raw) { ast, trans -> trans.transform(ast) }
-        val ir = IrGenerationContext(tree).ir()
-        println(ir.text)
+        println(ir().text)
+      } catch (e: MxcError) {
+        e.print()
+        exitProcess(1)
+      }
+    }
+
+    "codegen" -> {
+      try {
+        println(CodegenContext(filename, ir()).asm().text)
       } catch (e: MxcError) {
         e.print()
         exitProcess(1)
