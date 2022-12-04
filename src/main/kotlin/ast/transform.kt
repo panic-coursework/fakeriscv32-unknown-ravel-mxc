@@ -107,11 +107,7 @@ abstract class Transformer {
     is BinaryExpression -> transform(node)
     is CallExpression -> transform(node)
     is LambdaExpression -> transform(node)
-    is ComputedMemberExpression -> transform(node)
-    is GroupExpression -> transform(node)
-    is Identifier -> transform(node)
-    is MemberExpression -> transform(node)
-    is PrefixUpdateExpression -> transform(node)
+    is LeftHandSideExpression -> transform(node)
     is Literal -> transform(node)
     is NewExpression -> transform(node)
     is PostfixUpdateExpression -> transform(node)
@@ -332,7 +328,7 @@ class GenerateEmptyConstructors : Transformer() {
 }
 
 class DesugarMultiDimensionalNewExpressions : Transformer() {
-  val extraFunctions = mutableListOf<FunctionDeclaration>()
+  private val extraFunctions = mutableListOf<FunctionDeclaration>()
 
   override fun transform(node: Program) = Program(
     node.ctx,
@@ -399,7 +395,7 @@ class DesugarMultiDimensionalNewExpressions : Transformer() {
                   ComputedMemberExpression(
                     BuiltinSourceContext,
                     Identifier(BuiltinSourceContext, "a$depth"),
-                    Identifier(BuiltinSourceContext, "n$depth"),
+                    Identifier(BuiltinSourceContext, "i$depth"),
                   ),
                   Identifier(BuiltinSourceContext, "a${depth + 1}"),
                 ),
@@ -462,7 +458,7 @@ class DesugarMultiDimensionalNewExpressions : Transformer() {
         args,
       )
     } else {
-      node
+      super.transform(node)
     }
 }
 
@@ -478,5 +474,34 @@ class DesugarConstructors : Transformer() {
       )
     } else {
       node
+    }
+}
+
+class DesugarClassFields : Transformer() {
+  var currentClass: Set<String>? = null
+  override fun transform(node: ClassDeclaration): ClassDeclaration {
+    currentClass = node.body.flatMap { field ->
+      when (field) {
+        is ConstructorDeclaration -> listOf()
+        is FunctionDeclaration -> listOf(field.id.name)
+        is VariableDeclaration -> field.declarations.map { it.id.name }
+      }
+    }.toSet()
+    try {
+      return super.transform(node)
+    } finally {
+      currentClass = null
+    }
+  }
+
+  override fun transform(node: LeftHandSideExpression): LeftHandSideExpression =
+    if (node is Identifier && node.name in (currentClass ?: setOf())) {
+      MemberExpression(
+        BuiltinSourceContext,
+        ThisLiteral(BuiltinSourceContext),
+        node,
+      )
+    } else {
+      super.transform(node)
     }
 }

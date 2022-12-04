@@ -87,6 +87,7 @@ fun main(args: Array<String>) {
           GenerateEmptyConstructors(),
           DesugarConstructors(),
           DesugarMultiDimensionalNewExpressions(),
+          DesugarClassFields(),
         )
         val raw = program.ast()
         val tree = transformers.fold(raw) { ast, trans -> trans.transform(ast) }

@@ -1,4 +1,4 @@
-bin
+bin/mxc
 .vscode
 .idea
 META-INF
@@ -19,6 +19,8 @@ META-INF
 .gradle
 **/build/
 !src/**/build/
+
+vgcore.*
 
 .gradle
 build/
@@ -46,7 +48,7 @@ out/
 .settings
 .springBeans
 .sts4-cache
-bin/
+bin/mxc
 !**/src/main/**/bin/
 !**/src/test/**/bin/
 

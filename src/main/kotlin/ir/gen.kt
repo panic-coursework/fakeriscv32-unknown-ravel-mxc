@@ -52,7 +52,26 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
       return ctx
     }
 
-    fun emit() = blocks.map { it.emit() }
+    fun emit(): List<BasicBlock> {
+      val list = blocks.map { it.emit() }.filter { it.body.isNotEmpty() }
+      val blockFromLabel = list.associateBy { it.label }
+      val reachable = mutableSetOf<BasicBlock>()
+      fun visit(block: BasicBlock) {
+        if (reachable.contains(block)) return
+        reachable.add(block)
+        val term = block.body[block.body.size - 1] as TerminatorInstruction
+        term.successors.forEach { visit(blockFromLabel[it]!!) }
+      }
+      visit(list[0])
+      return reachable.toList()
+    }
+
+    fun debug() {
+      blocks
+        .map { it.emit() }
+        .filter { it.body.isNotEmpty() }
+        .forEach { System.err.println(it.text) }
+    }
   }
 
   private class BasicBlockContext(val func: FunctionContext, val label: Label) {
@@ -153,7 +172,7 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
         val ty = binding.type.ir
         val id = GlobalNamedIdentifier(binding.name)
         valueFromReference[ReferenceRecord(globalEnv, binding)] =
-          valueOf(id, ty)
+          valueOf(id, PointerType(ty))
         GlobalVariableDeclaration(id, Value(NullLiteral, PointerType(ty)))
       }
     val funcs = functions.map { ir(it) }
@@ -174,7 +193,7 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
     val thisArg = class_?.let {
       valueOf(
         LocalNamedIdentifier("this"),
-        PointerType((class_.env as ClassEnvironmentRecord).type.ir),
+        (class_.env as ClassEnvironmentRecord).type.ir,
       )
     }
     val thisArgs = thisArg?.let { listOf(it) } ?: listOf()
@@ -186,9 +205,15 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
     block.body += func.params.mapIndexed { i, param ->
       Store(param.id.value.operand, params[i])
     }
-    val exit = ir(block, func.body, null)
-    if (ty.returnType is MxVoid) {
-      exit.body.add(ReturnVoid)
+    try {
+      val exit = ir(block, func.body, null)
+      if (ty.returnType is MxVoid) {
+        exit.body.add(ReturnVoid)
+      }
+    } catch (e: Exception) {
+      System.err.println("Current function:")
+      ctx.debug()
+      throw e
     }
     val classPrefix = class_?.id?.name?.let { "$it." } ?: ""
     return FunctionDefinition(
@@ -362,17 +387,20 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
             if (default) exitBlock.label else nextBlock.label,
             if (default) nextBlock.label else exitBlock.label,
           )
-          entry.body.add(br)
+          left.exit.body.add(br)
           val nextRight = ir(nextBlock, node.right)
           val exitBr = BranchUnconditional(exitBlock.label)
-          nextBlock.body.add(exitBr)
+          nextRight.exit.body.add(exitBr)
           val id = entry.func.nextId(opname)
           val defaultV = if (default) 1 else 0
           val phi = Phi(
             id,
             listOf(
               Phi.Case(nextRight.result!!, nextBlock.label),
-              Phi.Case(Value(IntegerLiteral(defaultV), BoolType), entry.label),
+              Phi.Case(
+                Value(IntegerLiteral(defaultV), BoolType),
+                left.exit.label
+              ),
             ),
           )
           resFromOp(exitBlock, phi)
@@ -478,6 +506,7 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
             Triple(obj.exit, func, obj.result)
           }
 
+          // TODO: class call
           is AstIdentifier ->
             Triple(entry, GlobalNamedIdentifier(node.callee.name), null)
 
@@ -581,9 +610,14 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
             entry.func.nextId("new.$className"),
             Value(
               GlobalNamedIdentifier("malloc"),
-              FunctionType(listOf(Int32Type), PointerType(ty)),
+              FunctionType(listOf(Int32Type), ty),
             ),
-            listOf(Value(IntegerLiteral(ty.allocSize), Int32Type)),
+            listOf(
+              Value(
+                IntegerLiteral((ty as PointerType).pointee!!.allocSize),
+                Int32Type,
+              ),
+            ),
           )
           val ctor = CallVoid(
             Value(
@@ -686,21 +720,7 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
     is GroupExpression ->
       getLhsPointer(entry, node.expression as LeftHandSideExpression)
 
-    is AstIdentifier -> {
-      val ref = references[node]!!
-      if (ref.env is ClassEnvironmentRecord) {
-        val ty = typeFromStruct[(ref.env.type as MxStruct).name]!!
-        val ix = ty.indexFromName[node.name]!!
-        val op = GetElementPtr(
-          entry.func.nextId(node.name),
-          Value(LocalNamedIdentifier("this"), ty),
-          listOf(GepIndexLiteral(0), GepIndexLiteral(ix)),
-        )
-        resFromOp(entry, op)
-      } else {
-        ExpressionResult(entry, node.value)
-      }
-    }
+    is AstIdentifier -> ExpressionResult(entry, node.value)
 
     is MemberExpression -> {
       val obj = ir(entry, node.`object`)
@@ -711,7 +731,7 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
         obj.result!!.asType(),
         listOf(GepIndexLiteral(0), GepIndexLiteral(ix)),
       )
-      resFromOp(entry, gep)
+      resFromOp(obj.exit, gep)
     }
 
     is PrefixUpdateExpression -> {

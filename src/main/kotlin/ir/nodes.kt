@@ -24,7 +24,7 @@ class IntegerLiteral(val value: Int) : Operand {
 
 class StringLiteral(val content: ByteArray) : Operand {
   override val text
-    get() = "[ ${content.joinToString(", ") { "i8 $it" }}, i8 0 ]"
+    get() = "[ ${(content + 0).joinToString(", ") { "i8 $it" }} ]"
   val value get() = Value(this, ArrayType(CharType, content.size + 1))
 }
 
@@ -38,7 +38,7 @@ class AggregateLiteral(val values: List<Value<*>>) :
     get() = "{ ${values.joinToString(", ") { it.text }} }"
 }
 
-class Undef : Operand {
+object Undef : Operand {
   override val text get() = "undef"
 }
 
@@ -53,6 +53,7 @@ sealed interface LocalIdentifier : Identifier {
 }
 
 sealed class NamedIdentifier(override val name: String) : Identifier {
+  override fun toString() = "NamedIdentifier($name)"
   override fun hashCode() = name.hashCode()
   override fun equals(other: Any?) =
     other is NamedIdentifier && name == other.name
@@ -83,6 +84,8 @@ open class Value<out T : Type>(val operand: Operand, val type: T) : Node {
     }
     return Value(operand, type)
   }
+
+  override fun toString() = "Value($operand, $type)"
 }
 
 fun valueOf(operand: Operand, type: Type): Value<*> = when (type) {
@@ -119,16 +122,19 @@ object LabelType : PrimitiveType("label")
 open class PointerType(val pointee: Type?) : PrimitiveType("ptr"),
   DereferencableType, ComparableType {
   override fun deref(index: Int) = pointee!!
+  override fun toString() = "Pointer($pointee)"
 }
 
 open class ArrayType(val content: Type, val length: Int) : DereferencableType {
   override val text = "[ $length x ${content.text} ]"
   override fun deref(index: Int) = content
+  override fun toString() = "ArrayType($content, $length)"
 }
 
 open class AggregateType(val subtypes: List<Type>) : Type, DereferencableType {
   override val text get() = "{ ${subtypes.joinToString(", ") { it.text }} }"
   override fun deref(index: Int) = subtypes[index]
+  override fun toString() = "AggregateType(${subtypes.joinToString(", ")})"
 }
 
 class MxStructType(
@@ -205,13 +211,17 @@ class FunctionDefinition(
   private val bodyText get() = body.joinToString("\n\n") { it.text }
 }
 
-sealed interface TerminatorInstruction : Instruction
+sealed interface TerminatorInstruction : Instruction {
+  val successors: List<Label>
+}
 
 class ReturnValue(val value: Value<*>) : TerminatorInstruction {
+  override val successors get() = listOf<Label>()
   override val text get() = "ret ${value.text}"
 }
 
 object ReturnVoid : TerminatorInstruction {
+  override val successors get() = listOf<Label>()
   override val text = "ret void"
 }
 
@@ -220,14 +230,17 @@ class BranchConditional(
   val consequent: Label,
   val alternate: Label,
 ) : TerminatorInstruction {
+  override val successors get() = listOf(consequent, alternate)
   override val text get() = "br ${condition.text}, ${consequent.text}, ${alternate.text}"
 }
 
 class BranchUnconditional(val dest: Label) : TerminatorInstruction {
+  override val successors get() = listOf(dest)
   override val text get() = "br ${dest.text}"
 }
 
 object Unreachable : TerminatorInstruction {
+  override val successors get() = listOf<Label>()
   override val text = "unreachable"
 }
 
@@ -282,10 +295,10 @@ class IntBinaryOperation(
 class Icmp(
   result: LocalIdentifier,
   val cond: Condition,
-  type: ComparableType,
+  val paramType: ComparableType,
   lhs: Value<ComparableType>,
   rhs: Value<ComparableType>,
-) : BinaryOperation(result, lhs, rhs, "icmp $cond", type, BoolType) {
+) : BinaryOperation(result, lhs, rhs, "icmp $cond", paramType, BoolType) {
   enum class Condition {
     EQ, NE, UGT, UGE, ULT, ULE, SGT, SGE, SLT, SLE;
 
@@ -317,8 +330,7 @@ class Call(
   init {
     val actual = args.map { it.type }
     val expected = function.type.params
-    val typeError = actual.size != expected.size || actual.zip(expected)
-      .any { it.first != it.second }
+    val typeError = actual.size != expected.size
     if (typeError) {
       throw MxcInternalError(
         null,
@@ -337,8 +349,7 @@ class CallVoid(val function: Value<FunctionType>, val args: List<Value<*>>) :
   init {
     val actual = args.map { it.type }
     val expected = function.type.params
-    val typeError = actual.size != expected.size || actual.zip(expected)
-      .any { it.first != it.second }
+    val typeError = actual.size != expected.size
     if (typeError) {
       throw MxcInternalError(
         null,
@@ -398,14 +409,21 @@ data class GepIndexValue(val index: Value<Int32Type>) : GepIndex {
 
 class GetElementPtr(
   result: LocalIdentifier,
-  val target: Value<DereferencableType>,
+  val target: Value<PointerType>,
   val indices: List<GepIndex>
 ) : Operation(
   result,
   PointerType(indices.fold<GepIndex, Type>(target.type) { ty, i ->
     when (i) {
       is GepIndexLiteral -> (ty as DereferencableType).deref(i.index)
-      is GepIndexValue -> (ty as PointerType).pointee!!
+      is GepIndexValue -> when (ty) {
+        is PointerType -> ty.pointee!!
+        is ArrayType -> ty.content
+        else -> throw MxcInternalError(
+          null,
+          "Unexpected $ty at GEP (target ${target.type})",
+        )
+      }
     }
   })
 ) {

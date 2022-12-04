@@ -1,0 +1,14 @@
+#!/usr/bin/env node
+
+const filename = process.argv[2]
+if (!filename.startsWith('testcases') || !filename.endsWith('.mx')) {
+  process.exit(0)
+}
+
+const { readFileSync, writeFileSync } = require('fs')
+
+const file = readFileSync(filename).toString()
+const m = file.match(/=== input ===\n(?<i>.*)=== end ===.+=== output ===\n(?<o>.*)=== end ===/s)
+writeFileSync(filename.replace(/mx$/, 'in'), m.groups.i)
+writeFileSync(filename.replace(/mx$/, 'ans'), m.groups.o)
+writeFileSync(filename.replace(/mx$/, 'exit'), file.match(/ExitCode: (\d+)/)[1])

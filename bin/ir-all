@@ -1,0 +1,13 @@
+#!/bin/bash
+
+set -e
+rm -r /tmp/mxc.*
+
+testcases=$(find testcases/codegen -name '*.mx' | sort)
+
+for i in $testcases; do
+  if bin/ir $i && echo "$i pass"; then true; else
+    echo "$i fail"
+    exit 1
+  fi
+done

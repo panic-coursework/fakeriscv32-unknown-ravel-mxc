@@ -1,0 +1,36 @@
+#!/bin/bash
+
+set -e
+
+if [ ! -e $1 ]; then
+  echo "file $1 not found"
+  exit 1
+fi
+
+#./gradlew -q assemble
+
+tempdir="$(mktemp -d -p /tmp mxc.XXXXXXXXXX)"
+
+ll=$tempdir/code.ll
+builtins=$tempdir/builtins.ll
+exe=$tempdir/code
+infile=$(echo $1 | sed -E 's/\.mx$/.in/')
+outfile=$tempdir/code.out
+ansfile=$(echo $1 | sed -E 's/\.mx$/.ans/')
+exitfile=$(echo $1 | sed -E 's/\.mx$/.exit/')
+
+CC=clang
+
+bin/mxc/bin/mxc ir "$1" > $ll
+cp src/main/resources/builtins.x86.ll $builtins
+clang -m32 -Wno-override-module $ll $builtins -o $exe -g
+
+set +e
+$exe < $infile > $outfile
+exitcode=$?
+set -e
+
+diff -ZB - $exitfile <<< $exitcode
+diff -ZB $outfile $ansfile
+
+rm -r $tempdir

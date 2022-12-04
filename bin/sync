@@ -1,0 +1,3 @@
+#!/bin/bash
+
+cp build/libs/mxc-*.jar bin/mxc/lib
