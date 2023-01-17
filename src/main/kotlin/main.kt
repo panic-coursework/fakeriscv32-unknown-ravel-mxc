@@ -1,7 +1,7 @@
 package org.altk.lab.mxc
 
 import org.altk.lab.mxc.ast.*
-import org.altk.lab.mxc.codegen.CodegenContext
+import org.altk.lab.mxc.codegen.asm
 import org.altk.lab.mxc.ir.IrGenerationContext
 import org.altk.lab.mxc.ir.Module
 import org.altk.lab.mxc.recognizer.MxLexer
@@ -30,7 +30,7 @@ fun ojMain() {
     val raw = program.ast()
     val tree = transformers.fold(raw) { ast, trans -> trans.transform(ast) }
     val ir = IrGenerationContext(tree).ir()
-    val code = CodegenContext("stdin", ir).asm().text
+    val code = asm("stdin", ir).text
     File("output.s").writeText(code)
     val builtin =
       ir.javaClass.classLoader.getResource("builtins.s")!!.readBytes()
@@ -116,7 +116,7 @@ fun main(args: Array<String>) {
 
     "codegen" -> {
       try {
-        println(CodegenContext(filename, ir()).asm().text)
+        println(asm(filename, ir()).text)
       } catch (e: MxcError) {
         e.print()
         exitProcess(1)

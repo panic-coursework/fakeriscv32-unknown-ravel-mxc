@@ -9,321 +9,303 @@ import org.altk.lab.mxc.ir.Load as IrLoad
 import org.altk.lab.mxc.ir.Store as IrStore
 import org.altk.lab.mxc.ir.StringLiteral as IrStringLiteral
 
-class CodegenContext(val file: String, val irModule: Module) {
-  fun asm(): TranslationUnit {
-    val funcs = irModule.body.filterIsInstance<FunctionDefinition>()
-    val vars = irModule.body.filterIsInstance<GlobalVariableDeclaration>()
-    return TranslationUnit(file, funcs.map { asm(it) }, vars.map { asm(it) })
-  }
+fun asm(file: String, irModule: Module): TranslationUnit {
+  val funcs = irModule.body.filterIsInstance<FunctionDefinition>()
+  val vars = irModule.body.filterIsInstance<GlobalVariableDeclaration>()
+  return TranslationUnit(file, funcs.map { asm(it) }, vars.map { asm(it) })
+}
 
-  fun saveRegs(regs: List<Pair<Int, String>>) = regs.map {
-    Store(Store.Width.SW, "sp".R, it.first.L, it.second.R)
-  }
+private fun asm(ir: FunctionDefinition) =
+  allocateRegisters(FunctionCodegenContext(ir).asm())
 
-  fun loadRegs(regs: List<Pair<Int, String>>) = regs.map {
-    Load(Load.Width.LW, "sp".R, it.first.L, it.second.R)
-  }
+private fun asm(ir: GlobalVariableDeclaration) = GlobalVariable(
+  Label(ir.id.name),
+  wordsFromBytes(asciz(ir.value.operand)),
+)
 
-  private fun asm(ir: FunctionDefinition) = FunctionContext(ir).asm()
+private fun asciz(ir: Operand): ByteArray = when (ir) {
+  is IntegerLiteral -> ir.value.encodeToByteArray()
+  NullLiteral -> ByteArray(4)
+  is IrStringLiteral -> ir.content + 0
+  Undef, is Identifier -> error("unreachable")
+  is AggregateLiteral -> ir.values.map { asciz(it.operand) }
+    .fold(byteArrayOf()) { a, b -> a + b }
+}
 
-  class FunctionContext(private val func: FunctionDefinition) {
-    private val virtRegs = ((func.args + func.body.flatMap {
-      it.body.filterIsInstance<Operation>().map { op -> op.value }
-    }).mapIndexed { i, value ->
-      Pair((value.operand as LocalIdentifier).text, i)
-    }).toMap()
+private class FunctionCodegenContext(private val func: FunctionDefinition) {
+  private val virtRegs = ((func.args + func.body.flatMap {
+    it.body.filterIsInstance<Operation>().map { op -> op.value }
+  }).map { value ->
+    Pair(value.operand as LocalIdentifier, VirtualRegister())
+  }).toMap()
 
-    private val allocas =
-      func.body.flatMap { it.body.filterIsInstance<Alloca>() }
-    private val raOffset = 0
-    private val fpOffset = raOffset + wordSize
-    private val localOffset = fpOffset + wordSize
-    private val virtRegOffset = localOffset + allocas.size * wordSize
-    private val frameSize = alignFrame(virtRegOffset + virtRegs.size * wordSize)
+  private val LocalIdentifier.R get() = virtRegs[this]!!
 
-    private fun offsetOf(id: LocalIdentifier) =
-      virtRegs[id.text]!! * wordSize + virtRegOffset
+  private val allocas =
+    func.body.flatMap { it.body.filterIsInstance<Alloca>() }
 
-    private fun load(offset: Int, dest: Register) =
-      Load(Load.Width.LW, "sp".R, offset.L, dest)
+  private fun loadVirtual(value: Value<*>, dest: Register) =
+    when (val op = value.operand) {
+      is LocalIdentifier -> Mv(op.R, dest)
+      is IntegerLiteral -> Li(dest, op.value.L)
+      NullLiteral -> Li(dest, 0.L)
+      is GlobalIdentifier -> La(
+        dest,
+        Label((op as GlobalNamedIdentifier).name),
+      )
 
-    private fun store(offset: Int, src: Register) =
-      Store(Store.Width.SW, "sp".R, offset.L, src)
+      else -> error("unreachable $op")
+    }
 
-    private fun loadVirtual(value: Value<*>, dest: Register) =
-      when (val op = value.operand) {
-        is LocalIdentifier -> load(offsetOf(op), dest)
-        is IntegerLiteral -> Li(dest, op.value.L)
-        NullLiteral -> Li(dest, 0.L)
-        is GlobalIdentifier -> La(
-          dest,
-          Label((op as GlobalNamedIdentifier).name),
-        )
+  // TODO: indirect calls
+  private val Value<*>.label
+    get() = Label((operand as GlobalNamedIdentifier).name)
 
-        else -> error("unreachable $op")
-      }
+  private val phis = HashMap<String, List<Instruction>>()
 
-    private fun storeVirtual(src: Register, dest: LocalIdentifier) =
-      store(offsetOf(dest), src)
-
-    // TODO: indirect calls
-    private val Value<*>.label
-      get() = Label((operand as GlobalNamedIdentifier).name)
-
-    private val phis = HashMap<String, List<Instruction>>()
-
-    init {
-      func.body.forEach { phis[it.label.text] = listOf() }
-      func.body.forEach { block ->
-        block.body
-          .filterIsInstance<Phi>()
-          .forEach { phi ->
-            phi.cases.forEach { case ->
-              val cond = case.condition.text
-              phis[cond] = phis[cond]!! + listOf(
-                loadVirtual(case.value, "t0".R),
-                storeVirtual("t0".R, phi.result),
-              )
-            }
+  init {
+    func.body.forEach { phis[it.label.text] = listOf() }
+    func.body.forEach { block ->
+      block.body
+        .filterIsInstance<Phi>()
+        .forEach { phi ->
+          phi.cases.forEach { case ->
+            val cond = case.condition.text
+            phis[cond] = phis[cond]!! + loadVirtual(case.value, phi.result.R)
           }
+        }
+    }
+  }
+
+  fun asm(): Function {
+    val body = func.body.map { asm(it) }
+
+    val savedRegs = calleeSaveRegs.associateWith { VirtualRegister() }
+    val saveRegs = savedRegs.map { (phy, virt) -> Mv(phy, virt) }
+    val saveArgs = func.args.flatMapIndexed { i, arg ->
+      if (i <= 7) {
+        listOf(Mv("a$i".R, (arg.operand as LocalIdentifier).R))
+      } else {
+        val dest = (arg.operand as LocalIdentifier).R
+        listOf(Load(Load.Width.LW, "sp".R, ((i - 8) * wordSize).L, dest))
       }
     }
+    val initAllocas = allocas.flatMapIndexed { i, alloca ->
+      val offset = i * wordSize
+      listOf(IntI(IntI.Type.ADDI, "sp".R, offset.L, alloca.result.R))
+    }
+    val prelude = saveRegs + saveArgs + initAllocas
+    val preludeBlock = BasicBlock(Label("$prefix.prelude"), prelude)
 
-    fun asm(): Function {
-      // TODO: virt2phys
-      val body = func.body.map { asm(it) }
+    val epilogue = savedRegs.map { (phy, virt) -> Mv(virt, phy) }
+    val epilogueBlock = BasicBlock(Label("$prefix.epilogue"), epilogue)
 
-      val prelude = listOf(
-        Store(Store.Width.SW, "sp".R, (raOffset - frameSize).L, "ra".R),
-        Store(Store.Width.SW, "sp".R, (fpOffset - frameSize).L, "fp".R),
-        Mv("sp".R, "fp".R),
-        IntI(IntI.Type.ADDI, "sp".R, (-frameSize).L, "sp".R),
-      ) + func.args.flatMapIndexed { i, arg ->
-        if (i <= 7) {
-          listOf(storeVirtual("a$i".R, arg.operand as LocalIdentifier))
-        } else {
-          listOf(
-            load((i - 8) * wordSize, "t0".R),
-            storeVirtual("t0".R, arg.operand as LocalIdentifier),
-          )
-        }
-      } + allocas.flatMapIndexed { i, alloca ->
-        val offset = localOffset + i * wordSize
+    return Function(
+      func.id.name,
+      listOf(preludeBlock) + body + epilogueBlock,
+      allocas.size,
+    )
+  }
+
+  private val prefix get() = func.id.name
+
+  private fun asm(ir: IrBasicBlock) = BasicBlock(
+    asm(ir.label),
+    ir.body.flatMap { asm(it, ir.label.text) },
+  )
+
+  private val gotoRet get() = Jump(Label("$prefix.exit"))
+
+  private fun asm(ir: IrInstruction, block: String) = when (ir) {
+    is CallVoid -> asm(ir)
+    is Alloca -> listOf()
+    is Icmp -> asm(ir)
+    is Int32BinaryOperation -> asm(ir)
+    is IntBinaryOperation -> asm(ir)
+    is IrCall -> asm(ir)
+    is GetElementPtr -> asm(ir)
+    is IrLoad -> asm(ir)
+    is IrStore -> asm(ir)
+    is Phi -> listOf()
+    is BranchConditional -> asm(ir, block)
+    is BranchUnconditional -> asm(ir, block)
+    is ReturnValue -> listOf(loadVirtual(ir.value, "a0".R), gotoRet)
+    ReturnVoid -> listOf(gotoRet)
+    Unreachable -> listOf()
+    is InsertValue, is ExtractValue -> error("unused")
+  }
+
+  private fun call(
+    args: List<Value<*>>,
+    label: Label,
+    result: LocalIdentifier?,
+  ): List<Instruction> {
+    val frameSize =
+      if (args.size > 8) alignFrame((args.size - 8) * wordSize) else 0
+    val stores = args.flatMapIndexed { i, arg ->
+      if (i <= 7) {
+        listOf(loadVirtual(arg, "a$i".R))
+      } else {
+        val offset = (i - 8) * wordSize - frameSize
+        val temp = VirtualRegister()
         listOf(
-          IntI(IntI.Type.ADDI, "sp".R, offset.L, "t0".R),
-          storeVirtual("t0".R, alloca.result),
+          loadVirtual(arg, temp),
+          Store(Store.Width.SW, "sp".R, offset.L, temp)
         )
       }
-      val preludeBlock = BasicBlock(Label(func.id.name), prelude)
-
-      val epilogue = listOf(
-        load(raOffset, "ra".R),
-        load(fpOffset, "fp".R),
+    }
+    val call = Call(label)
+    val storeResult =
+      result?.let { listOf(Mv("a0".R, it.R)) } ?: listOf()
+    return if (args.size > 8) {
+      stores + listOf(
+        IntI(IntI.Type.ADDI, "sp".R, (-frameSize).L, "sp".R),
+        call,
         IntI(IntI.Type.ADDI, "sp".R, frameSize.L, "sp".R),
-        Ret,
-      )
-      val epilogueBlock = BasicBlock(Label("$prefix.exit"), epilogue)
-
-      return Function(
-        func.id.name.encodeToByteArray(),
-        listOf(preludeBlock) + body + epilogueBlock,
-      )
+      ) + storeResult
+    } else {
+      stores + call + storeResult
     }
+  }
 
-    private val prefix get() = func.id.name
+  private fun asm(ir: CallVoid) = call(ir.args, ir.function.label, null)
+  private fun asm(ir: IrCall) = call(ir.args, ir.function.label, ir.result)
 
-    private fun asm(ir: IrBasicBlock) = BasicBlock(
-      asm(ir.label),
-      ir.body.flatMap { asm(it, ir.label.text) },
-    )
-
-    private val gotoRet get() = Jump(Label("$prefix.exit"))
-
-    private fun asm(ir: IrInstruction, block: String) = when (ir) {
-      is CallVoid -> asm(ir)
-      is Alloca -> listOf()
-      is Icmp -> asm(ir)
-      is Int32BinaryOperation -> asm(ir)
-      is IntBinaryOperation -> asm(ir)
-      is IrCall -> asm(ir)
-      is GetElementPtr -> asm(ir)
-      is IrLoad -> asm(ir)
-      is IrStore -> asm(ir)
-      is Phi -> listOf()
-      is BranchConditional -> asm(ir, block)
-      is BranchUnconditional -> asm(ir, block)
-      is ReturnValue -> listOf(loadVirtual(ir.value, "a0".R), gotoRet)
-      ReturnVoid -> listOf(gotoRet)
-      Unreachable -> listOf()
-      is InsertValue, is ExtractValue -> error("unused")
-    }
-
-    private fun call(
-      args: List<Value<*>>,
-      label: Label,
-      result: LocalIdentifier?,
-    ): List<Instruction> {
-      val frameSize =
-        if (args.size > 8) alignFrame((args.size - 8) * wordSize) else 0
-      val stores = args.flatMapIndexed { i, arg ->
-        if (i <= 7) {
-          listOf(loadVirtual(arg, "a$i".R))
-        } else {
-          val offset = (i - 8) * wordSize - frameSize
-          listOf(
-            loadVirtual(arg, "t0".R),
-            Store(Store.Width.SW, "sp".R, offset.L, "t0".R)
-          )
-        }
-      }
-      val call = Call(label)
-      val storeResult =
-        result?.let { listOf(storeVirtual("a0".R, it)) } ?: listOf()
-      return if (args.size > 8) {
-        stores + listOf(
-          IntI(IntI.Type.ADDI, "sp".R, (-frameSize).L, "sp".R),
-          call,
-          IntI(IntI.Type.ADDI, "sp".R, frameSize.L, "sp".R),
-        ) + storeResult
-      } else {
-        stores + call + storeResult
-      }
-    }
-
-    private fun asm(ir: CallVoid) = call(ir.args, ir.function.label, null)
-    private fun asm(ir: IrCall) = call(ir.args, ir.function.label, ir.result)
-
-    private fun asm(ir: Icmp) = listOf(
-      loadVirtual(ir.lhs, "t1".R),
-      loadVirtual(ir.rhs, "t2".R),
+  private fun asm(ir: Icmp): List<Instruction> {
+    val lhs = VirtualRegister()
+    val rhs = VirtualRegister()
+    val dest = ir.result.R
+    return listOf(
+      loadVirtual(ir.lhs, lhs),
+      loadVirtual(ir.rhs, rhs),
     ) + when (ir.cond) {
       Icmp.Condition.EQ -> listOf(
-        IntR(IntR.Type.XOR, "t1".R, "t2".R, "t0".R),
-        IntI(IntI.Type.SLTIU, "t0".R, 1.L, "t0".R),
+        IntR(IntR.Type.XOR, lhs, rhs, dest),
+        IntI(IntI.Type.SLTIU, dest, 1.L, dest),
       )
 
       Icmp.Condition.NE -> listOf(
-        IntR(IntR.Type.XOR, "t1".R, "t2".R, "t0".R),
-        IntR(IntR.Type.SLTU, "zero".R, "t0".R, "t0".R),
+        IntR(IntR.Type.XOR, lhs, rhs, dest),
+        IntR(IntR.Type.SLTU, "zero".R, dest, dest),
       )
 
-      Icmp.Condition.SLT -> listOf(IntR(IntR.Type.SLT, "t1".R, "t2".R, "t0".R))
-      Icmp.Condition.SGT -> listOf(IntR(IntR.Type.SLT, "t2".R, "t1".R, "t0".R))
+      Icmp.Condition.SLT -> listOf(IntR(IntR.Type.SLT, lhs, rhs, dest))
+      Icmp.Condition.SGT -> listOf(IntR(IntR.Type.SLT, rhs, lhs, dest))
 
       Icmp.Condition.SGE -> listOf(
-        IntR(IntR.Type.SLT, "t1".R, "t2".R, "t0".R),
-        IntI(IntI.Type.XORI, "t0".R, 1.L, "t0".R),
+        IntR(IntR.Type.SLT, lhs, rhs, dest),
+        IntI(IntI.Type.XORI, dest, 1.L, dest),
       )
 
       Icmp.Condition.SLE -> listOf(
-        IntR(IntR.Type.SLT, "t2".R, "t1".R, "t0".R),
-        IntI(IntI.Type.XORI, "t0".R, 1.L, "t0".R),
+        IntR(IntR.Type.SLT, rhs, lhs, dest),
+        IntI(IntI.Type.XORI, dest, 1.L, dest),
       )
-    } + storeVirtual("t0".R, ir.result)
+    }
+  }
 
-    private fun asm(ir: Int32BinaryOperation) = listOf(
-      loadVirtual(ir.lhs, "t1".R),
-      loadVirtual(ir.rhs, "t2".R),
-      IntR(
-        when (ir.opType) {
-          Int32BinaryOperation.Op.ADD -> IntR.Type.ADD
-          Int32BinaryOperation.Op.SUB -> IntR.Type.SUB
-          Int32BinaryOperation.Op.MUL -> IntR.Type.MUL
-          Int32BinaryOperation.Op.SDIV -> IntR.Type.DIV
-          Int32BinaryOperation.Op.SREM -> IntR.Type.REM
-          Int32BinaryOperation.Op.SHL -> IntR.Type.SLL
-          Int32BinaryOperation.Op.ASHR -> IntR.Type.SRA
-        },
-        "t1".R,
-        "t2".R,
-        "t0".R,
-      ),
-      storeVirtual("t0".R, ir.result),
+  private fun asmBinaryOperation(
+    lhs: Value<*>,
+    rhs: Value<*>,
+    op: IntR.Type,
+    result: LocalIdentifier,
+  ): List<Instruction> {
+    val lhsReg = VirtualRegister()
+    val rhsReg = VirtualRegister()
+    return listOf(
+      loadVirtual(lhs, lhsReg),
+      loadVirtual(rhs, rhsReg),
+      IntR(op, lhsReg, rhsReg, result.R),
     )
+  }
 
-    private fun asm(ir: IntBinaryOperation) = listOf(
-      loadVirtual(ir.lhs, "t1".R),
-      loadVirtual(ir.rhs, "t2".R),
-      IntR(
-        when (ir.opType) {
-          IntBinaryOperation.Op.OR -> IntR.Type.OR
-          IntBinaryOperation.Op.AND -> IntR.Type.AND
-          IntBinaryOperation.Op.XOR -> IntR.Type.XOR
-        },
-        "t1".R,
-        "t2".R,
-        "t0".R,
-      ),
-      storeVirtual("t0".R, ir.result),
-    )
+  private fun asm(ir: Int32BinaryOperation) = asmBinaryOperation(
+    ir.lhs, ir.rhs,
+    when (ir.opType) {
+      Int32BinaryOperation.Op.ADD -> IntR.Type.ADD
+      Int32BinaryOperation.Op.SUB -> IntR.Type.SUB
+      Int32BinaryOperation.Op.MUL -> IntR.Type.MUL
+      Int32BinaryOperation.Op.SDIV -> IntR.Type.DIV
+      Int32BinaryOperation.Op.SREM -> IntR.Type.REM
+      Int32BinaryOperation.Op.SHL -> IntR.Type.SLL
+      Int32BinaryOperation.Op.ASHR -> IntR.Type.SRA
+    },
+    ir.result,
+  )
 
-    // TODO: generic GetElementPointer
-    private fun asm(ir: GetElementPtr) = listOf(
-      loadVirtual(ir.target, "t0".R),
+  private fun asm(ir: IntBinaryOperation) = asmBinaryOperation(
+    ir.lhs, ir.rhs,
+    when (ir.opType) {
+      IntBinaryOperation.Op.OR -> IntR.Type.OR
+      IntBinaryOperation.Op.AND -> IntR.Type.AND
+      IntBinaryOperation.Op.XOR -> IntR.Type.XOR
+    },
+    ir.result,
+  )
+
+  // TODO: generic GetElementPointer
+  private fun asm(ir: GetElementPtr): List<Instruction> {
+    val address = ir.result.R
+    val offset = VirtualRegister()
+    return listOf(
+      loadVirtual(ir.target, address),
     ) + when (ir.indices.size) {
       2 -> listOf(
         IntI(
           IntI.Type.ADDI,
-          "t0".R,
+          address,
           ((ir.indices[1] as GepIndexLiteral).index * wordSize).L,
-          "t0".R,
+          address,
         ),
       )
 
       3 -> listOf(
-        loadVirtual((ir.indices[2] as GepIndexValue).index, "t1".R),
-        IntI(IntI.Type.ADDI, "t1".R, 1.L, "t1".R),
-        IntR(IntR.Type.ADD, "t1".R, "t1".R, "t1".R),
-        IntR(IntR.Type.ADD, "t1".R, "t1".R, "t1".R),
-        IntR(IntR.Type.ADD, "t0".R, "t1".R, "t0".R),
+        loadVirtual((ir.indices[2] as GepIndexValue).index, offset),
+        IntI(IntI.Type.ADDI, offset, 1.L, offset),
+        IntI(IntI.Type.SLLI, offset, 2.L, offset),
+        IntR(IntR.Type.ADD, address, offset, address),
       )
 
       else -> error("unreachable")
-    } + storeVirtual("t0".R, ir.result)
+    }
+  }
 
-    private fun asm(ir: IrLoad) = listOf(
-      loadVirtual(ir.target, "t1".R),
-      Load(Load.Width.LW, "t1".R, 0.L, "t0".R),
-      storeVirtual("t0".R, ir.result),
+  private fun asm(ir: IrLoad): List<Instruction> {
+    val address = VirtualRegister()
+    return listOf(
+      loadVirtual(ir.target, address),
+      Load(Load.Width.LW, address, 0.L, ir.result.R),
     )
+  }
 
-    private fun asm(ir: IrStore) = listOf(
-      loadVirtual(Value(ir.target, PointerType(null)), "t0".R),
-      loadVirtual(ir.content, "t1".R),
-      Store(Store.Width.SW, "t0".R, ImmediateLiteral(0), "t1".R),
+  private fun asm(ir: IrStore): List<Instruction> {
+    val address = VirtualRegister()
+    val value = VirtualRegister()
+    return listOf(
+      loadVirtual(Value(ir.target, PointerType(null)), address),
+      loadVirtual(ir.content, value),
+      Store(Store.Width.SW, address, ImmediateLiteral(0), value),
     )
+  }
 
-    private fun asm(ir: BranchConditional, block: String) = phis[block]!! +
+  private fun asm(ir: BranchConditional, block: String): List<Instruction> {
+    val cond = VirtualRegister()
+    return phis[block]!! +
       listOf(
-        loadVirtual(ir.condition, "t0".R),
+        loadVirtual(ir.condition, cond),
         Branch(
           Branch.Type.BNE,
-          "t0".R,
+          cond,
           "zero".R,
           ImmediateLabel(asm(ir.consequent)),
         ),
         Jump(asm(ir.alternate)),
       )
-
-    private fun asm(ir: BranchUnconditional, block: String) =
-      phis[block]!! + listOf(Jump(asm(ir.dest)))
-
-    private fun asm(ir: IrLabel) =
-      Label("$prefix.${(ir.operand as LocalNamedIdentifier).name}")
   }
 
-  private fun asm(ir: GlobalVariableDeclaration) = GlobalVariable(
-    Label(ir.id.name),
-    wordsFromBytes(asciz(ir.value.operand)),
-  )
+  private fun asm(ir: BranchUnconditional, block: String) =
+    phis[block]!! + Jump(asm(ir.dest))
 
-  private fun asciz(ir: Operand): ByteArray = when (ir) {
-    is IntegerLiteral -> ir.value.encodeToByteArray()
-    NullLiteral -> ByteArray(4)
-    is IrStringLiteral -> ir.content + 0
-    Undef, is Identifier -> error("unreachable")
-    is AggregateLiteral -> ir.values.map { asciz(it.operand) }
-      .fold(byteArrayOf()) { a, b -> a + b }
-  }
-
+  private fun asm(ir: IrLabel) =
+    Label("$prefix.${(ir.operand as LocalNamedIdentifier).name}")
 }

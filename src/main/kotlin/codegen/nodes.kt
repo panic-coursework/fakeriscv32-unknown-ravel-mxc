@@ -23,11 +23,41 @@ class TranslationUnit(
     }
 }
 
-class Function(val name: ByteArray, val body: List<BasicBlock>) : Node {
-  private val prelude
+class Function(
+  val name: String,
+  val body: List<BasicBlock>,
+  val frameWords: Int,
+) : Node {
+  private val signature
     get() = ".globl ${escape(name)}\n.type ${escape(name)},@function\n"
+
+  private val raOffset = frameWords * wordSize
+  private val fpOffset = raOffset + wordSize
+  private val frameSize = alignFrame(fpOffset + wordSize)
+
+  private val prelude
+    get() = BasicBlock(
+      Label(name),
+      listOf(
+        Store(Store.Width.SW, "sp".R, (raOffset - frameSize).L, "ra".R),
+        Store(Store.Width.SW, "sp".R, (fpOffset - frameSize).L, "fp".R),
+        Mv("sp".R, "fp".R),
+        IntI(IntI.Type.ADDI, "sp".R, (-frameSize).L, "sp".R),
+      ),
+    )
+  private val epilogue
+    get() = BasicBlock(
+      Label("$name.exit"),
+      listOf(
+        Load(Load.Width.LW, "sp".R, raOffset.L, "ra".R),
+        Load(Load.Width.LW, "sp".R, fpOffset.L, "fp".R),
+        IntI(IntI.Type.ADDI, "sp".R, frameSize.L, "sp".R),
+        Ret,
+      ),
+    )
+  private val instructions = listOf(prelude) + body + epilogue
   override val text
-    get() = indent(prelude) + body.joinToString("\n") { it.text }
+    get() = indent(signature) + instructions.joinToString("\n") { it.text }
 }
 
 class GlobalVariable(val label: Label, val body: List<Literal>) : Node {
@@ -62,7 +92,10 @@ class Label(val name: ByteArray) : Node {
   override val text get() = escape(name)
 }
 
-sealed interface Instruction : Node
+sealed interface Instruction : Node {
+  val defines: List<Register>
+  val uses: List<Register>
+}
 
 sealed interface Immediate : Node
 
@@ -83,7 +116,9 @@ class ImmediateLabel(val label: Label) : Immediate {
 }
 
 
-enum class Register : Node {
+sealed interface Register : Node
+
+enum class PhysicalRegister : Register {
   ZERO, RA, SP, GP, TP, T0, T1, T2, S0, S1,
   A0, A1, A2, A3, A4, A5, A6, A7,
   S2, S3, S4, S5, S6, S7, S8, S9, S10, S11,
@@ -93,41 +128,47 @@ enum class Register : Node {
   override val text get() = name.lowercase()
 }
 
+class VirtualRegister : Register {
+  override val text get() = "[${this}]"
+  override fun equals(other: Any?) = this === other
+  override fun hashCode() = javaClass.hashCode()
+}
+
 val String.R
   get() = when (this) {
-    "zero" -> Register.ZERO
-    "ra" -> Register.RA
-    "sp" -> Register.SP
-    "gp" -> Register.GP
-    "tp" -> Register.TP
-    "t0" -> Register.T0
-    "t1" -> Register.T1
-    "t2" -> Register.T2
-    "fp" -> Register.S0
-    "s0" -> Register.S0
-    "s1" -> Register.S1
-    "a0" -> Register.A0
-    "a1" -> Register.A1
-    "a2" -> Register.A2
-    "a3" -> Register.A3
-    "a4" -> Register.A4
-    "a5" -> Register.A5
-    "a6" -> Register.A6
-    "a7" -> Register.A7
-    "s2" -> Register.S2
-    "s3" -> Register.S3
-    "s4" -> Register.S4
-    "s5" -> Register.S5
-    "s6" -> Register.S6
-    "s7" -> Register.S7
-    "s8" -> Register.S8
-    "s9" -> Register.S9
-    "s10" -> Register.S10
-    "s11" -> Register.S11
-    "t3" -> Register.T3
-    "t4" -> Register.T4
-    "t5" -> Register.T5
-    "t6" -> Register.T6
+    "zero" -> PhysicalRegister.ZERO
+    "ra" -> PhysicalRegister.RA
+    "sp" -> PhysicalRegister.SP
+    "gp" -> PhysicalRegister.GP
+    "tp" -> PhysicalRegister.TP
+    "t0" -> PhysicalRegister.T0
+    "t1" -> PhysicalRegister.T1
+    "t2" -> PhysicalRegister.T2
+    "fp" -> PhysicalRegister.S0
+    "s0" -> PhysicalRegister.S0
+    "s1" -> PhysicalRegister.S1
+    "a0" -> PhysicalRegister.A0
+    "a1" -> PhysicalRegister.A1
+    "a2" -> PhysicalRegister.A2
+    "a3" -> PhysicalRegister.A3
+    "a4" -> PhysicalRegister.A4
+    "a5" -> PhysicalRegister.A5
+    "a6" -> PhysicalRegister.A6
+    "a7" -> PhysicalRegister.A7
+    "s2" -> PhysicalRegister.S2
+    "s3" -> PhysicalRegister.S3
+    "s4" -> PhysicalRegister.S4
+    "s5" -> PhysicalRegister.S5
+    "s6" -> PhysicalRegister.S6
+    "s7" -> PhysicalRegister.S7
+    "s8" -> PhysicalRegister.S8
+    "s9" -> PhysicalRegister.S9
+    "s10" -> PhysicalRegister.S10
+    "s11" -> PhysicalRegister.S11
+    "t3" -> PhysicalRegister.T3
+    "t4" -> PhysicalRegister.T4
+    "t5" -> PhysicalRegister.T5
+    "t6" -> PhysicalRegister.T6
     else -> throw MxcInternalError(null, "Invalid register $this")
   }
 
@@ -138,6 +179,8 @@ sealed class RTypeInstruction(
   val rd: Register,
 ) : Instruction {
   override val text get() = "$inst\t${rd.text}, ${rs1.text}, ${rs2.text}"
+  override val defines get() = listOf(rd)
+  override val uses get() = listOf(rs1, rs2)
 }
 
 sealed class ITypeInstruction(
@@ -147,6 +190,8 @@ sealed class ITypeInstruction(
   val rd: Register,
 ) : Instruction {
   override val text get() = "$inst\t${rd.text}, ${rs1.text}, ${imm.text}"
+  override val defines get() = listOf(rd)
+  override val uses get() = listOf(rs1)
 }
 
 sealed class LoadInstruction(
@@ -165,6 +210,8 @@ sealed class STypeInstruction(
   val imm: Immediate,
 ) : Instruction {
   override val text get() = "$inst\t${rs2.text}, ${imm.text}(${rs1.text})"
+  override val defines get() = listOf<Register>()
+  override val uses get() = listOf(rs1, rs2)
 }
 
 sealed class BTypeInstruction(
@@ -174,6 +221,8 @@ sealed class BTypeInstruction(
   imm: Immediate,
 ) : STypeInstruction(inst, rs1, rs2, imm) {
   override val text get() = "$inst\t${rs1.text}, ${rs2.text}, ${imm.text}"
+  override val defines get() = listOf<Register>()
+  override val uses get() = listOf(rs1, rs2)
 }
 
 sealed class UTypeInstruction(
@@ -182,6 +231,8 @@ sealed class UTypeInstruction(
   val rd: Register,
 ) : Instruction {
   override val text get() = "$inst\t${rd.text}, ${imm.text}"
+  override val defines get() = listOf(rd)
+  override val uses get() = listOf<Register>()
 }
 
 
@@ -230,10 +281,14 @@ sealed interface PsuedoInstruction : Instruction
 
 class Li(val rd: Register, val imm: ImmediateLiteral) : PsuedoInstruction {
   override val text get() = "li\t${rd.text}, ${imm.text}"
+  override val defines get() = listOf(rd)
+  override val uses get() = listOf<Register>()
 }
 
 class La(val rd: Register, val imm: Label) : PsuedoInstruction {
   override val text get() = "la\t${rd.text}, ${imm.text}"
+  override val defines get() = listOf(rd)
+  override val uses get() = listOf<Register>()
 }
 
 class LoadGlobal(val width: Width, val imm: Label, val rd: Register) :
@@ -241,6 +296,8 @@ class LoadGlobal(val width: Width, val imm: Label, val rd: Register) :
   enum class Width { LB, LH, LW }
 
   override val text get() = "${width.name.lowercase()}\t${rd.text}, ${imm.text}"
+  override val defines get() = listOf(rd)
+  override val uses get() = listOf<Register>()
 }
 
 class StoreGlobal(
@@ -252,19 +309,33 @@ class StoreGlobal(
   enum class Width { SB, SH, SW }
 
   override val text get() = "${width.name.lowercase()}\t${base.text}, ${imm.text}, ${rt.text}"
+  override val defines get() = listOf(rt)
+  override val uses get() = listOf<Register>()
 }
 
 sealed class JumpLabel(val inst: String, val label: Label) : PsuedoInstruction {
   override val text get() = "$inst\t${escape(label.name)}"
 }
 
-class Call(label: Label) : JumpLabel("call", label)
-class Tail(label: Label) : JumpLabel("tail", label)
-class Jump(label: Label) : JumpLabel("j", label)
+sealed class CallLabel(inst: String, label: Label) : JumpLabel(inst, label) {
+  override val defines get() = callerSaveRegs
+  override val uses get() = listOf<Register>()
+}
+
+class Call(label: Label) : CallLabel("call", label)
+class Tail(label: Label) : CallLabel("tail", label)
+class Jump(label: Label) : JumpLabel("j", label) {
+  override val defines get() = listOf<Register>()
+  override val uses get() = listOf<Register>()
+}
 class JumpReg(val src: Register) : PsuedoInstruction {
   override val text get() = "jr\t${src.text}"
+  override val defines get() = listOf<Register>()
+  override val uses get() = listOf(src)
 }
 
 object Ret : PsuedoInstruction {
   override val text get() = "ret"
+  override val defines get() = listOf<Register>()
+  override val uses get() = listOf<Register>()
 }

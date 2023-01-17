@@ -1,6 +1,7 @@
 package org.altk.lab.mxc.codegen
 
 private val simpleIdentifier = Regex("""[\-a-zA-Z$._][\-a-zA-Z$._0-9]*""")
+fun escape(text: String): String = escape(text.encodeToByteArray())
 fun escape(text: ByteArray): String {
   val decoded = text.decodeToString()
   return if (decoded.matches(simpleIdentifier)) {
