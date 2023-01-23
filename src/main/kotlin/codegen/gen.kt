@@ -81,6 +81,14 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
     val body = func.body.map { asm(it) }
 
     val savedRegs = calleeSaveRegs.associateWith { VirtualRegister() }
+
+    val epilogue = savedRegs.map { (phy, virt) -> Mv(virt, phy) }
+    val epilogueBlock = BasicBlock(
+      Label("$prefix.epilogue"),
+      epilogue,
+      setOf(exitLabel(prefix).name),
+    )
+
     val saveRegs = savedRegs.map { (phy, virt) -> Mv(phy, virt) }
     val saveArgs = func.args.flatMapIndexed { i, arg ->
       if (i <= 7) {
@@ -95,10 +103,11 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
       listOf(IntI(IntI.Type.ADDI, "sp".R, offset.L, alloca.result.R))
     }
     val prelude = saveRegs + saveArgs + initAllocas
-    val preludeBlock = BasicBlock(Label("$prefix.prelude"), prelude)
-
-    val epilogue = savedRegs.map { (phy, virt) -> Mv(virt, phy) }
-    val epilogueBlock = BasicBlock(Label("$prefix.epilogue"), epilogue)
+    val preludeBlock = BasicBlock(
+      Label("$prefix.prelude"),
+      prelude,
+      setOf(body.firstOrNull()?.label?.name ?: epilogueBlock.label.name),
+    )
 
     return Function(
       func.id.name,
@@ -112,9 +121,10 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
   private fun asm(ir: IrBasicBlock) = BasicBlock(
     asm(ir.label),
     ir.body.flatMap { asm(it, ir.label.text) },
+    ir.successors.map { "$prefix.${(it.operand as NamedIdentifier).name}" }.toSet(),
   )
 
-  private val gotoRet get() = Jump(Label("$prefix.exit"))
+  private val gotoRet get() = Jump(Label("$prefix.epilogue"))
 
   private fun asm(ir: IrInstruction, block: String) = when (ir) {
     is CallVoid -> asm(ir)
@@ -307,5 +317,5 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
     phis[block]!! + Jump(asm(ir.dest))
 
   private fun asm(ir: IrLabel) =
-    Label("$prefix.${(ir.operand as LocalNamedIdentifier).name}")
+    Label("$prefix.${(ir.operand as NamedIdentifier).name}")
 }

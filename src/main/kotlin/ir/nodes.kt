@@ -198,6 +198,7 @@ class BasicBlock(
 ) : Node {
   override val text get() = "${(label.operand as Identifier).escapedName}:\n${bodyText}"
   private val bodyText get() = indent(body.joinToString("\n") { it.text })
+  val successors get() = (body.last() as TerminatorInstruction).successors
 }
 
 class FunctionDefinition(
@@ -212,16 +213,16 @@ class FunctionDefinition(
 }
 
 sealed interface TerminatorInstruction : Instruction {
-  val successors: List<Label>
+  val successors: Set<Label>
 }
 
 class ReturnValue(val value: Value<*>) : TerminatorInstruction {
-  override val successors get() = listOf<Label>()
+  override val successors get() = setOf<Label>()
   override val text get() = "ret ${value.text}"
 }
 
 object ReturnVoid : TerminatorInstruction {
-  override val successors get() = listOf<Label>()
+  override val successors get() = setOf<Label>()
   override val text = "ret void"
 }
 
@@ -230,17 +231,17 @@ class BranchConditional(
   val consequent: Label,
   val alternate: Label,
 ) : TerminatorInstruction {
-  override val successors get() = listOf(consequent, alternate)
+  override val successors get() = setOf(consequent, alternate)
   override val text get() = "br ${condition.text}, ${consequent.text}, ${alternate.text}"
 }
 
 class BranchUnconditional(val dest: Label) : TerminatorInstruction {
-  override val successors get() = listOf(dest)
+  override val successors get() = setOf(dest)
   override val text get() = "br ${dest.text}"
 }
 
 object Unreachable : TerminatorInstruction {
-  override val successors get() = listOf<Label>()
+  override val successors get() = setOf<Label>()
   override val text = "unreachable"
 }
 

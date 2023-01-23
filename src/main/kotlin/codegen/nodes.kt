@@ -23,6 +23,8 @@ class TranslationUnit(
     }
 }
 
+fun exitLabel(func: String) = Label("$func.exit")
+
 class Function(
   val name: String,
   val body: List<BasicBlock>,
@@ -44,20 +46,22 @@ class Function(
         Mv("sp".R, "fp".R),
         IntI(IntI.Type.ADDI, "sp".R, (-frameSize).L, "sp".R),
       ),
+      setOf(body.firstOrNull()?.label?.name ?: exitLabel(name).name),
     )
   private val epilogue
     get() = BasicBlock(
-      Label("$name.exit"),
+      exitLabel(name),
       listOf(
         Load(Load.Width.LW, "sp".R, raOffset.L, "ra".R),
         Load(Load.Width.LW, "sp".R, fpOffset.L, "fp".R),
         IntI(IntI.Type.ADDI, "sp".R, frameSize.L, "sp".R),
         Ret,
       ),
+      setOf(),
     )
-  private val instructions = listOf(prelude) + body + epilogue
+  private val blocks = listOf(prelude) + body + epilogue
   override val text
-    get() = indent(signature) + instructions.joinToString("\n") { it.text }
+    get() = indent(signature) + blocks.joinToString("\n") { it.text }
 }
 
 class GlobalVariable(val label: Label, val body: List<Literal>) : Node {
@@ -80,21 +84,29 @@ class StringLiteral(val value: ByteArray) : Literal {
   override val text get() = ".asciz \"${escapeStringLiteral(value)}\""
 }
 
-class BasicBlock(val label: Label, val body: List<Instruction>) : Node {
+class BasicBlock(
+  val label: Label,
+  val body: List<Instruction>,
+  val successorNames: Set<String>,
+) : Node {
   override val text
     get() = (listOf(label.text + ":") +
       body.map { indent(it.text) }).joinToString("\n")
+  private val registers = body
+    .fold(Pair(setOf<Register>(), setOf<Register>())) { (defs, uses), bb ->
+      Pair(defs.plus(bb.defs), uses.plus(bb.uses.minus(defs)))
+    }
+  val defs get() = registers.first
+  val uses get() = registers.second
 }
 
-class Label(val name: ByteArray) : Node {
-  constructor(name: String) : this(name.encodeToByteArray())
-
+class Label(val name: String) : Node {
   override val text get() = escape(name)
 }
 
 sealed interface Instruction : Node {
-  val defines: List<Register>
-  val uses: List<Register>
+  val defs: Set<Register>
+  val uses: Set<Register>
 }
 
 sealed interface Immediate : Node
@@ -179,8 +191,8 @@ sealed class RTypeInstruction(
   val rd: Register,
 ) : Instruction {
   override val text get() = "$inst\t${rd.text}, ${rs1.text}, ${rs2.text}"
-  override val defines get() = listOf(rd)
-  override val uses get() = listOf(rs1, rs2)
+  override val defs get() = setOf(rd)
+  override val uses get() = setOf(rs1, rs2)
 }
 
 sealed class ITypeInstruction(
@@ -190,8 +202,8 @@ sealed class ITypeInstruction(
   val rd: Register,
 ) : Instruction {
   override val text get() = "$inst\t${rd.text}, ${rs1.text}, ${imm.text}"
-  override val defines get() = listOf(rd)
-  override val uses get() = listOf(rs1)
+  override val defs get() = setOf(rd)
+  override val uses get() = setOf(rs1)
 }
 
 sealed class LoadInstruction(
@@ -210,8 +222,8 @@ sealed class STypeInstruction(
   val imm: Immediate,
 ) : Instruction {
   override val text get() = "$inst\t${rs2.text}, ${imm.text}(${rs1.text})"
-  override val defines get() = listOf<Register>()
-  override val uses get() = listOf(rs1, rs2)
+  override val defs get() = setOf<Register>()
+  override val uses get() = setOf(rs1, rs2)
 }
 
 sealed class BTypeInstruction(
@@ -221,8 +233,8 @@ sealed class BTypeInstruction(
   imm: Immediate,
 ) : STypeInstruction(inst, rs1, rs2, imm) {
   override val text get() = "$inst\t${rs1.text}, ${rs2.text}, ${imm.text}"
-  override val defines get() = listOf<Register>()
-  override val uses get() = listOf(rs1, rs2)
+  override val defs get() = setOf<Register>()
+  override val uses get() = setOf(rs1, rs2)
 }
 
 sealed class UTypeInstruction(
@@ -231,8 +243,8 @@ sealed class UTypeInstruction(
   val rd: Register,
 ) : Instruction {
   override val text get() = "$inst\t${rd.text}, ${imm.text}"
-  override val defines get() = listOf(rd)
-  override val uses get() = listOf<Register>()
+  override val defs get() = setOf(rd)
+  override val uses get() = setOf<Register>()
 }
 
 
@@ -281,14 +293,14 @@ sealed interface PsuedoInstruction : Instruction
 
 class Li(val rd: Register, val imm: ImmediateLiteral) : PsuedoInstruction {
   override val text get() = "li\t${rd.text}, ${imm.text}"
-  override val defines get() = listOf(rd)
-  override val uses get() = listOf<Register>()
+  override val defs get() = setOf(rd)
+  override val uses get() = setOf<Register>()
 }
 
 class La(val rd: Register, val imm: Label) : PsuedoInstruction {
   override val text get() = "la\t${rd.text}, ${imm.text}"
-  override val defines get() = listOf(rd)
-  override val uses get() = listOf<Register>()
+  override val defs get() = setOf(rd)
+  override val uses get() = setOf<Register>()
 }
 
 class LoadGlobal(val width: Width, val imm: Label, val rd: Register) :
@@ -296,8 +308,8 @@ class LoadGlobal(val width: Width, val imm: Label, val rd: Register) :
   enum class Width { LB, LH, LW }
 
   override val text get() = "${width.name.lowercase()}\t${rd.text}, ${imm.text}"
-  override val defines get() = listOf(rd)
-  override val uses get() = listOf<Register>()
+  override val defs get() = setOf(rd)
+  override val uses get() = setOf<Register>()
 }
 
 class StoreGlobal(
@@ -309,8 +321,8 @@ class StoreGlobal(
   enum class Width { SB, SH, SW }
 
   override val text get() = "${width.name.lowercase()}\t${base.text}, ${imm.text}, ${rt.text}"
-  override val defines get() = listOf(rt)
-  override val uses get() = listOf<Register>()
+  override val defs get() = setOf(rt)
+  override val uses get() = setOf<Register>()
 }
 
 sealed class JumpLabel(val inst: String, val label: Label) : PsuedoInstruction {
@@ -318,24 +330,25 @@ sealed class JumpLabel(val inst: String, val label: Label) : PsuedoInstruction {
 }
 
 sealed class CallLabel(inst: String, label: Label) : JumpLabel(inst, label) {
-  override val defines get() = callerSaveRegs
-  override val uses get() = listOf<Register>()
+  override val defs get() = callerSaveRegs.toSet()
+  override val uses get() = setOf<Register>()
 }
 
 class Call(label: Label) : CallLabel("call", label)
 class Tail(label: Label) : CallLabel("tail", label)
 class Jump(label: Label) : JumpLabel("j", label) {
-  override val defines get() = listOf<Register>()
-  override val uses get() = listOf<Register>()
+  override val defs get() = setOf<Register>()
+  override val uses get() = setOf<Register>()
 }
+
 class JumpReg(val src: Register) : PsuedoInstruction {
   override val text get() = "jr\t${src.text}"
-  override val defines get() = listOf<Register>()
-  override val uses get() = listOf(src)
+  override val defs get() = setOf<Register>()
+  override val uses get() = setOf(src)
 }
 
 object Ret : PsuedoInstruction {
   override val text get() = "ret"
-  override val defines get() = listOf<Register>()
-  override val uses get() = listOf<Register>()
+  override val defs get() = setOf<Register>()
+  override val uses get() = setOf<Register>()
 }
