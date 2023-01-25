@@ -33,33 +33,25 @@ class Function(
   private val signature
     get() = ".globl ${escape(name)}\n.type ${escape(name)},@function\n"
 
-  private val raOffset = frameWords * wordSize
-  private val fpOffset = raOffset + wordSize
-  private val frameSize = alignFrame(fpOffset + wordSize)
+  private val frameSize = alignFrame(frameWords * wordSize)
+  // TODO: fp?
 
   private val prelude
     get() = BasicBlock(
       Label(name),
-      listOf(
-        Store(Store.Width.SW, "sp".R, (raOffset - frameSize).L, "ra".R),
-        Store(Store.Width.SW, "sp".R, (fpOffset - frameSize).L, "fp".R),
-        Mv("sp".R, "fp".R),
-        IntI(IntI.Type.ADDI, "sp".R, (-frameSize).L, "sp".R),
-      ),
+      listOf(IntI(IntI.Type.ADDI, "sp".R, (-frameSize).L, "sp".R)),
       setOf(body.firstOrNull()?.label?.name ?: exitLabel(name).name),
     )
   private val epilogue
     get() = BasicBlock(
       exitLabel(name),
       listOf(
-        Load(Load.Width.LW, "sp".R, raOffset.L, "ra".R),
-        Load(Load.Width.LW, "sp".R, fpOffset.L, "fp".R),
         IntI(IntI.Type.ADDI, "sp".R, frameSize.L, "sp".R),
         Ret,
       ),
       setOf(),
     )
-  private val blocks = listOf(prelude) + body + epilogue
+  val blocks = listOf(prelude) + body + epilogue
   override val text
     get() = indent(signature) + blocks.joinToString("\n") { it.text }
 }
@@ -76,7 +68,7 @@ class GlobalVariable(val label: Label, val body: List<Literal>) : Node {
 
 sealed interface Literal : Node
 
-class WordLiteral(val value: Int) : Literal {
+class WordLiteral(val value: Long) : Literal {
   override val text get() = ".word $value"
 }
 
@@ -107,7 +99,11 @@ class Label(val name: String) : Node {
 sealed interface Instruction : Node {
   val defs: Set<Register>
   val uses: Set<Register>
+  fun replace(x: Register, y: Register): Instruction
 }
+
+private fun Register.r(old: Register, new: Register) =
+  if (old == this) new else this
 
 sealed interface Immediate : Node
 
@@ -128,7 +124,9 @@ class ImmediateLabel(val label: Label) : Immediate {
 }
 
 
-sealed interface Register : Node
+sealed interface Register : Node {
+  val name: String
+}
 
 enum class PhysicalRegister : Register {
   ZERO, RA, SP, GP, TP, T0, T1, T2, S0, S1,
@@ -140,10 +138,16 @@ enum class PhysicalRegister : Register {
   override val text get() = name.lowercase()
 }
 
-class VirtualRegister : Register {
-  override val text get() = "[${this}]"
+class VirtualRegister(
+  override val name: String,
+  val fallback: PhysicalRegister?,
+) : Register {
+  override val text
+    get() = "[vreg@${hashCode().toString(16).padStart(8, '0')} ($name)]"
+
   override fun equals(other: Any?) = this === other
-  override fun hashCode() = javaClass.hashCode()
+  override fun hashCode() = super.hashCode()
+  override fun toString() = text
 }
 
 val String.R
@@ -251,34 +255,68 @@ sealed class UTypeInstruction(
 class Branch(val type: Type, rs1: Register, rs2: Register, dest: Immediate) :
   BTypeInstruction(type.toString().lowercase(), rs1, rs2, dest) {
   enum class Type { BEQ, BNE, BLT, BLTU, BGE, BGEU }
+
+  override fun replace(x: Register, y: Register) =
+    Branch(type, rs1.r(x, y), rs2.r(x, y), imm)
 }
 
-class Lui(imm: Immediate, rd: Register) : UTypeInstruction("lui", imm, rd)
-class Auipc(imm: Immediate, rd: Register) : UTypeInstruction("auipc", imm, rd)
-class Jal(imm: Immediate, rd: Register) : UTypeInstruction("jal", imm, rd)
+class Lui(imm: Immediate, rd: Register) : UTypeInstruction("lui", imm, rd) {
+  override fun replace(x: Register, y: Register) = Lui(imm, rd.r(x, y))
+}
 
-class Jalr(base: Register, imm: Immediate, rd: Register) :
+class Auipc(imm: Immediate, rd: Register) : UTypeInstruction("auipc", imm, rd) {
+  override fun replace(x: Register, y: Register) = Auipc(imm, rd.r(x, y))
+}
+
+class Jal(imm: Immediate, rd: Register) : UTypeInstruction("jal", imm, rd) {
+  override fun replace(x: Register, y: Register) = Jal(imm, rd.r(x, y))
+}
+
+class Jalr(val base: Register, imm: Immediate, rd: Register) :
   ITypeInstruction("jalr", base, imm, rd) {
   override val text get() = "$inst\t${rd.text}, ${imm.text}(${rd.text})"
+  override fun replace(x: Register, y: Register) =
+    Jalr(base.r(x, y), imm, rd.r(x, y))
 }
 
-class Load(val width: Width, base: Register, imm: Immediate, rd: Register) :
+class Load(val width: Width, val base: Register, imm: Immediate, rd: Register) :
   LoadInstruction(width.name.lowercase(), base, imm, rd) {
   enum class Width { LB, LH, LW, LBU, LHU }
+
+  override fun replace(x: Register, y: Register) =
+    Load(width, base.r(x, y), imm, rd.r(x, y))
 }
 
-class Store(val width: Width, base: Register, imm: Immediate, src: Register) :
+class Store(
+  val width: Width,
+  val base: Register,
+  imm: Immediate,
+  val src: Register
+) :
   STypeInstruction(width.name.lowercase(), base, src, imm) {
   enum class Width { SB, SH, SW }
+
+  override fun replace(x: Register, y: Register) =
+    Store(width, base.r(x, y), imm, src.r(x, y))
 }
 
-open class IntI(val type: Type, src: Register, imm: Immediate, dest: Register) :
+open class IntI(
+  val type: Type,
+  val src: Register,
+  imm: Immediate,
+  val dest: Register,
+) :
   ITypeInstruction(type.name.lowercase(), src, imm, dest) {
   enum class Type { ADDI, SLTI, SLTIU, XORI, ORI, ANDI, SLLI, SRLI, SRAI }
+
+  override fun replace(x: Register, y: Register) =
+    IntI(type, src.r(x, y), imm, dest.r(x, y))
 }
 
 class Mv(src: Register, dest: Register) :
-  IntI(Type.ADDI, src, ImmediateLiteral(0), dest)
+  IntI(Type.ADDI, src, ImmediateLiteral(0), dest) {
+  override fun replace(x: Register, y: Register) = Mv(src.r(x, y), dest.r(x, y))
+}
 
 class IntR(val type: Type, rs1: Register, rs2: Register, rd: Register) :
   RTypeInstruction(type.name.lowercase(), rs1, rs2, rd) {
@@ -286,6 +324,9 @@ class IntR(val type: Type, rs1: Register, rs2: Register, rd: Register) :
     ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND,
     MUL, MULH, MULHU, MULHSU, DIV, DIVU, REM, REMU,
   }
+
+  override fun replace(x: Register, y: Register) =
+    IntR(type, rs1.r(x, y), rs2.r(x, y), rd.r(x, y))
 }
 
 
@@ -295,12 +336,14 @@ class Li(val rd: Register, val imm: ImmediateLiteral) : PsuedoInstruction {
   override val text get() = "li\t${rd.text}, ${imm.text}"
   override val defs get() = setOf(rd)
   override val uses get() = setOf<Register>()
+  override fun replace(x: Register, y: Register) = Li(rd.r(x, y), imm)
 }
 
 class La(val rd: Register, val imm: Label) : PsuedoInstruction {
   override val text get() = "la\t${rd.text}, ${imm.text}"
   override val defs get() = setOf(rd)
   override val uses get() = setOf<Register>()
+  override fun replace(x: Register, y: Register) = La(rd.r(x, y), imm)
 }
 
 class LoadGlobal(val width: Width, val imm: Label, val rd: Register) :
@@ -310,6 +353,8 @@ class LoadGlobal(val width: Width, val imm: Label, val rd: Register) :
   override val text get() = "${width.name.lowercase()}\t${rd.text}, ${imm.text}"
   override val defs get() = setOf(rd)
   override val uses get() = setOf<Register>()
+  override fun replace(x: Register, y: Register) =
+    LoadGlobal(width, imm, rd.r(x, y))
 }
 
 class StoreGlobal(
@@ -323,15 +368,19 @@ class StoreGlobal(
   override val text get() = "${width.name.lowercase()}\t${base.text}, ${imm.text}, ${rt.text}"
   override val defs get() = setOf(rt)
   override val uses get() = setOf<Register>()
+  override fun replace(x: Register, y: Register) =
+    StoreGlobal(width, base.r(x, y), rt.r(x, y), imm)
 }
 
 sealed class JumpLabel(val inst: String, val label: Label) : PsuedoInstruction {
   override val text get() = "$inst\t${escape(label.name)}"
+  override fun replace(x: Register, y: Register) = this
 }
 
 sealed class CallLabel(inst: String, label: Label) : JumpLabel(inst, label) {
   override val defs get() = callerSaveRegs.toSet()
   override val uses get() = setOf<Register>()
+  override fun replace(x: Register, y: Register) = this
 }
 
 class Call(label: Label) : CallLabel("call", label)
@@ -345,10 +394,12 @@ class JumpReg(val src: Register) : PsuedoInstruction {
   override val text get() = "jr\t${src.text}"
   override val defs get() = setOf<Register>()
   override val uses get() = setOf(src)
+  override fun replace(x: Register, y: Register) = JumpReg(src.r(x, y))
 }
 
 object Ret : PsuedoInstruction {
   override val text get() = "ret"
   override val defs get() = setOf<Register>()
   override val uses get() = setOf<Register>()
+  override fun replace(x: Register, y: Register) = this
 }

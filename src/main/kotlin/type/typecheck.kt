@@ -327,7 +327,9 @@ open class TypecheckRecord(val ast: Program) {
           else -> ty in node.operator.operandTypes
         }
         if (!valid) {
-          throw TypeError(node.ctx, "Invalid operand type (got $ty)")
+          val msg =
+            "Invalid operand type (got $ty, operand types are ${node.left.currentType} and ${node.right.currentType})"
+          throw TypeError(node.ctx, msg)
         }
         if (ty !is MxNullptr) ty.checkCompleteness(node.ctx)
         check(node.left, ty)

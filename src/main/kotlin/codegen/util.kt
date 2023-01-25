@@ -7,9 +7,10 @@ fun escape(text: ByteArray): String {
   return if (decoded.matches(simpleIdentifier)) {
     decoded
   } else {
-    "_${text.joinToString("") { it.toString(16).padStart(2, '0') } }"
+    "_${text.joinToString("") { it.toString(16).padStart(2, '0') }}"
   }
 }
+
 fun escapeStringLiteral(text: ByteArray): String {
   val bytes = text.map { it.toInt() }.toMutableList()
   if (bytes.last() == 0) bytes.removeLast()
@@ -27,17 +28,18 @@ fun indent(text: String) =
 
 fun Int.encodeToByteArray() = listOf(
   and(0xff),
-  shl(8).and(0xff),
-  shl(16).and(0xff),
-  shl(24),
+  shr(8).and(0xff),
+  shr(16).and(0xff),
+  shr(24),
 ).map { it.toByte() }.toByteArray()
 
 fun wordsFromBytes(bytes: ByteArray): List<WordLiteral> {
   val size = (bytes.size + 3) / 4
   return List(size) {
     val base = it * 4
-    val word = List(4) { i -> bytes.getOrNull(base + i)?.toInt() ?: 0 }
-      .foldRight(0) { b, a -> a.shl(8).or(b) }
+    val word =
+      List(4) { i -> bytes.getOrNull(base + i)?.toLong()?.and(0xff) ?: 0 }
+        .foldRight(0.toLong()) { b, a -> a.shl(8).or(b) }
     WordLiteral(word)
   }
 }

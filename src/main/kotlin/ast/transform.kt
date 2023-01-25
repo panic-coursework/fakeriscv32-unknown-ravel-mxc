@@ -1,5 +1,8 @@
 package org.altk.lab.mxc.ast
 
+import org.altk.lab.mxc.type.ClassEnvironmentRecord
+import org.altk.lab.mxc.type.TypecheckRecord
+
 abstract class Transformer {
   open fun transform(node: Program) =
     Program(node.ctx, node.body.map { transform(it) })
@@ -478,24 +481,13 @@ class DesugarConstructors : Transformer() {
 }
 
 class DesugarClassFields : Transformer() {
-  var currentClass: Set<String>? = null
-  override fun transform(node: ClassDeclaration): ClassDeclaration {
-    currentClass = node.body.flatMap { field ->
-      when (field) {
-        is ConstructorDeclaration -> listOf()
-        is FunctionDeclaration -> listOf(field.id.name)
-        is VariableDeclaration -> field.declarations.map { it.id.name }
-      }
-    }.toSet()
-    try {
-      return super.transform(node)
-    } finally {
-      currentClass = null
-    }
+  private var tyck: TypecheckRecord? = null
+  override fun transform(node: Program): Program {
+    tyck = TypecheckRecord(node)
+    return super.transform(node)
   }
-
   override fun transform(node: LeftHandSideExpression): LeftHandSideExpression =
-    if (node is Identifier && node.name in (currentClass ?: setOf())) {
+    if (node is Identifier && tyck!!.references[node]!!.env is ClassEnvironmentRecord) {
       MemberExpression(
         BuiltinSourceContext,
         ThisLiteral(BuiltinSourceContext),

@@ -5,9 +5,13 @@ rm -rf /tmp/mxc.*
 
 testcases=$(find testcases/codegen -name '*.mx' | sort)
 
+#ok=0
 for i in $testcases; do
+#  if echo $i | grep t64; then ok=1; fi
+#  if [ $ok == 1 ]; then
   if bin/codegen $i && echo "$i pass"; then true; else
     echo "$i fail"
     exit 1
   fi
+#  fi
 done

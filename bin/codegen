@@ -16,13 +16,15 @@ infile=$(echo $1 | sed -E 's/\.mx$/.in/')
 outfile=$tempdir/code.out
 ansfile=$(echo $1 | sed -E 's/\.mx$/.ans/')
 exitfile=$(echo $1 | sed -E 's/\.mx$/.exit/')
+ravellog=$tempdir/ravel.log
 
 bin/mxc/bin/mxc codegen "$1" > $s
 cp src/main/resources/builtins.s $builtins
 
-ravel=../ravel/src/ravel
+ravel=../archive/ravel/src/ravel
 
-exitcode=$($ravel --input-file=$infile --output-file=$outfile $s $builtins 2>&1 | grep 'exit code' | sed 's/exit code: //')
+exitcode=$($ravel --input-file=$infile --output-file=$outfile $s $builtins 2>&1 | tee $ravellog | grep 'exit code' | sed 's/exit code: //')
+# echo $(cat $ravellog | grep 'time: ')
 
 diff -ZB - $exitfile <<< $exitcode
 diff -ZB $outfile $ansfile

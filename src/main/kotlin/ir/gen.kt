@@ -2,6 +2,7 @@ package org.altk.lab.mxc.ir
 
 import org.altk.lab.mxc.MxcInternalError
 import org.altk.lab.mxc.ast.*
+import org.altk.lab.mxc.ast.Identifier
 import org.altk.lab.mxc.type.*
 import org.altk.lab.mxc.ast.FunctionDeclaration as AstFunctionDeclaration
 import org.altk.lab.mxc.ast.Identifier as AstIdentifier
@@ -367,6 +368,18 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
     return ExpressionResult(exit, op.value)
   }
 
+  private val Expression.isPure
+    get(): Boolean = when (this) {
+      is AssignmentExpression, is CallExpression, is UpdateExpression, is NewExpression -> false
+      is LambdaExpression, is Identifier, is Literal -> true
+      is ComputedMemberExpression -> `object`.isPure && prop.isPure
+      is MemberExpression -> `object`.isPure
+      is GroupExpression -> expression.isPure
+      is UnaryExpression -> argument.isPure
+      is BinaryExpression ->
+        left.isPure && right.isPure && operator != BinaryOperator.DIV && operator != BinaryOperator.REM
+    }
+
   private fun ir(entry: BasicBlockContext, node: Expression): ExpressionResult =
     when (node) {
       is AssignmentExpression -> {
@@ -377,7 +390,7 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
       }
 
       is BinaryExpression ->
-        if (node.operator == BinaryOperator.AND || node.operator == BinaryOperator.OR) {
+        if (!node.isPure && (node.operator == BinaryOperator.AND || node.operator == BinaryOperator.OR)) {
           val default = node.operator == BinaryOperator.OR
           val opname = node.operator.toString()
           val left = ir(entry, node.left)
@@ -449,13 +462,23 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
               else -> throw MxcInternalError(null, "Invalid string op")
             }
 
-            is MxStruct, is MxArray, MxBool -> Icmp(
-              id,
-              node.operator.irCompare,
-              node.left.type.ir as ComparableType,
-              left.result!!.asType(),
-              right.result!!.asType(),
-            )
+            is MxStruct, is MxArray, MxBool -> when (node.operator) {
+              BinaryOperator.AND, BinaryOperator.OR -> IntBinaryOperation(
+                id,
+                BoolType,
+                if (node.operator == BinaryOperator.AND) IntBinaryOperation.Op.AND else IntBinaryOperation.Op.OR,
+                left.result!!.asType(),
+                right.result!!.asType(),
+              )
+
+              else -> Icmp(
+                id,
+                node.operator.irCompare,
+                node.left.type.ir as ComparableType,
+                left.result!!.asType(),
+                right.result!!.asType(),
+              )
+            }
 
             MxInt -> when (node.operator) {
               BinaryOperator.ADD, BinaryOperator.SUB,

@@ -36,7 +36,8 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
   private val virtRegs = ((func.args + func.body.flatMap {
     it.body.filterIsInstance<Operation>().map { op -> op.value }
   }).map { value ->
-    Pair(value.operand as LocalIdentifier, VirtualRegister())
+    val id = value.operand as LocalIdentifier
+    Pair(id, VirtualRegister("var.${id.name}", null))
   }).toMap()
 
   private val LocalIdentifier.R get() = virtRegs[this]!!
@@ -80,7 +81,8 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
   fun asm(): Function {
     val body = func.body.map { asm(it) }
 
-    val savedRegs = calleeSaveRegs.associateWith { VirtualRegister() }
+    val savedRegs = (calleeSaveRegs + "ra".R)
+      .associateWith { VirtualRegister("save.$it", null) }
 
     val epilogue = savedRegs.map { (phy, virt) -> Mv(virt, phy) }
     val epilogueBlock = BasicBlock(
@@ -121,7 +123,12 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
   private fun asm(ir: IrBasicBlock) = BasicBlock(
     asm(ir.label),
     ir.body.flatMap { asm(it, ir.label.text) },
-    ir.successors.map { "$prefix.${(it.operand as NamedIdentifier).name}" }.toSet(),
+    if (ir.successors.isEmpty()) {
+      setOf("$prefix.epilogue")
+    } else {
+      ir.successors.map { "$prefix.${(it.operand as NamedIdentifier).name}" }
+        .toSet()
+    },
   )
 
   private val gotoRet get() = Jump(Label("$prefix.epilogue"))
@@ -157,7 +164,7 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
         listOf(loadVirtual(arg, "a$i".R))
       } else {
         val offset = (i - 8) * wordSize - frameSize
-        val temp = VirtualRegister()
+        val temp = VirtualRegister("a$i", null)
         listOf(
           loadVirtual(arg, temp),
           Store(Store.Width.SW, "sp".R, offset.L, temp)
@@ -182,8 +189,8 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
   private fun asm(ir: IrCall) = call(ir.args, ir.function.label, ir.result)
 
   private fun asm(ir: Icmp): List<Instruction> {
-    val lhs = VirtualRegister()
-    val rhs = VirtualRegister()
+    val lhs = VirtualRegister("icmp.lhs", "t0".R)
+    val rhs = VirtualRegister("icmp.rhs", "t1".R)
     val dest = ir.result.R
     return listOf(
       loadVirtual(ir.lhs, lhs),
@@ -220,8 +227,8 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
     op: IntR.Type,
     result: LocalIdentifier,
   ): List<Instruction> {
-    val lhsReg = VirtualRegister()
-    val rhsReg = VirtualRegister()
+    val lhsReg = VirtualRegister("$op.lhs", "t0".R)
+    val rhsReg = VirtualRegister("$op.rhs", "t1".R)
     return listOf(
       loadVirtual(lhs, lhsReg),
       loadVirtual(rhs, rhsReg),
@@ -256,7 +263,7 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
   // TODO: generic GetElementPointer
   private fun asm(ir: GetElementPtr): List<Instruction> {
     val address = ir.result.R
-    val offset = VirtualRegister()
+    val offset = VirtualRegister("gep.offset", "t0".R)
     return listOf(
       loadVirtual(ir.target, address),
     ) + when (ir.indices.size) {
@@ -281,7 +288,7 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
   }
 
   private fun asm(ir: IrLoad): List<Instruction> {
-    val address = VirtualRegister()
+    val address = VirtualRegister("load.addr", "t0".R)
     return listOf(
       loadVirtual(ir.target, address),
       Load(Load.Width.LW, address, 0.L, ir.result.R),
@@ -289,8 +296,8 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
   }
 
   private fun asm(ir: IrStore): List<Instruction> {
-    val address = VirtualRegister()
-    val value = VirtualRegister()
+    val address = VirtualRegister("store.addr", "t0".R)
+    val value = VirtualRegister("store.value", "t1".R)
     return listOf(
       loadVirtual(Value(ir.target, PointerType(null)), address),
       loadVirtual(ir.content, value),
@@ -299,7 +306,7 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
   }
 
   private fun asm(ir: BranchConditional, block: String): List<Instruction> {
-    val cond = VirtualRegister()
+    val cond = VirtualRegister("br.cond", "t0".R)
     return phis[block]!! +
       listOf(
         loadVirtual(ir.condition, cond),
