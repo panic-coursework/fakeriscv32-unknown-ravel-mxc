@@ -100,6 +100,8 @@ sealed interface Instruction : Node {
   val defs: Set<Register>
   val uses: Set<Register>
   fun replace(x: Register, y: Register): Instruction
+  fun replaceUses(x: Register, y: Register): Instruction
+  fun replaceDefs(x: Register, y: Register): Instruction
 }
 
 private fun Register.r(old: Register, new: Register) =
@@ -258,18 +260,26 @@ class Branch(val type: Type, rs1: Register, rs2: Register, dest: Immediate) :
 
   override fun replace(x: Register, y: Register) =
     Branch(type, rs1.r(x, y), rs2.r(x, y), imm)
+  override fun replaceUses(x: Register, y: Register) = replace(x, y)
+  override fun replaceDefs(x: Register, y: Register) = this
 }
 
 class Lui(imm: Immediate, rd: Register) : UTypeInstruction("lui", imm, rd) {
   override fun replace(x: Register, y: Register) = Lui(imm, rd.r(x, y))
+  override fun replaceUses(x: Register, y: Register) = this
+  override fun replaceDefs(x: Register, y: Register) = replace(x, y)
 }
 
 class Auipc(imm: Immediate, rd: Register) : UTypeInstruction("auipc", imm, rd) {
   override fun replace(x: Register, y: Register) = Auipc(imm, rd.r(x, y))
+  override fun replaceUses(x: Register, y: Register) = this
+  override fun replaceDefs(x: Register, y: Register) = replace(x, y)
 }
 
 class Jal(imm: Immediate, rd: Register) : UTypeInstruction("jal", imm, rd) {
   override fun replace(x: Register, y: Register) = Jal(imm, rd.r(x, y))
+  override fun replaceUses(x: Register, y: Register) = this
+  override fun replaceDefs(x: Register, y: Register) = replace(x, y)
 }
 
 class Jalr(val base: Register, imm: Immediate, rd: Register) :
@@ -277,6 +287,10 @@ class Jalr(val base: Register, imm: Immediate, rd: Register) :
   override val text get() = "$inst\t${rd.text}, ${imm.text}(${rd.text})"
   override fun replace(x: Register, y: Register) =
     Jalr(base.r(x, y), imm, rd.r(x, y))
+  override fun replaceUses(x: Register, y: Register) =
+    Jalr(base.r(x, y), imm, rd)
+  override fun replaceDefs(x: Register, y: Register) =
+    Jalr(base, imm, rd.r(x, y))
 }
 
 class Load(val width: Width, val base: Register, imm: Immediate, rd: Register) :
@@ -285,6 +299,10 @@ class Load(val width: Width, val base: Register, imm: Immediate, rd: Register) :
 
   override fun replace(x: Register, y: Register) =
     Load(width, base.r(x, y), imm, rd.r(x, y))
+  override fun replaceUses(x: Register, y: Register) =
+    Load(width, base.r(x, y), imm, rd)
+  override fun replaceDefs(x: Register, y: Register) =
+    Load(width, base, imm, rd.r(x, y))
 }
 
 class Store(
@@ -298,6 +316,8 @@ class Store(
 
   override fun replace(x: Register, y: Register) =
     Store(width, base.r(x, y), imm, src.r(x, y))
+  override fun replaceUses(x: Register, y: Register) = replace(x, y)
+  override fun replaceDefs(x: Register, y: Register) = this
 }
 
 open class IntI(
@@ -311,11 +331,17 @@ open class IntI(
 
   override fun replace(x: Register, y: Register) =
     IntI(type, src.r(x, y), imm, dest.r(x, y))
+  override fun replaceUses(x: Register, y: Register) =
+    IntI(type, src.r(x, y), imm, dest)
+  override fun replaceDefs(x: Register, y: Register) =
+    IntI(type, src, imm, dest.r(x, y))
 }
 
 class Mv(src: Register, dest: Register) :
   IntI(Type.ADDI, src, ImmediateLiteral(0), dest) {
   override fun replace(x: Register, y: Register) = Mv(src.r(x, y), dest.r(x, y))
+  override fun replaceUses(x: Register, y: Register) = Mv(src.r(x, y), dest)
+  override fun replaceDefs(x: Register, y: Register) = Mv(src, dest.r(x, y))
 }
 
 class IntR(val type: Type, rs1: Register, rs2: Register, rd: Register) :
@@ -327,6 +353,10 @@ class IntR(val type: Type, rs1: Register, rs2: Register, rd: Register) :
 
   override fun replace(x: Register, y: Register) =
     IntR(type, rs1.r(x, y), rs2.r(x, y), rd.r(x, y))
+  override fun replaceUses(x: Register, y: Register) =
+    IntR(type, rs1.r(x, y), rs2.r(x, y), rd)
+  override fun replaceDefs(x: Register, y: Register) =
+    IntR(type, rs1, rs2, rd.r(x, y))
 }
 
 
@@ -337,6 +367,8 @@ class Li(val rd: Register, val imm: ImmediateLiteral) : PsuedoInstruction {
   override val defs get() = setOf(rd)
   override val uses get() = setOf<Register>()
   override fun replace(x: Register, y: Register) = Li(rd.r(x, y), imm)
+  override fun replaceUses(x: Register, y: Register) = this
+  override fun replaceDefs(x: Register, y: Register) = replace(x, y)
 }
 
 class La(val rd: Register, val imm: Label) : PsuedoInstruction {
@@ -344,6 +376,8 @@ class La(val rd: Register, val imm: Label) : PsuedoInstruction {
   override val defs get() = setOf(rd)
   override val uses get() = setOf<Register>()
   override fun replace(x: Register, y: Register) = La(rd.r(x, y), imm)
+  override fun replaceUses(x: Register, y: Register) = this
+  override fun replaceDefs(x: Register, y: Register) = replace(x, y)
 }
 
 class LoadGlobal(val width: Width, val imm: Label, val rd: Register) :
@@ -355,6 +389,8 @@ class LoadGlobal(val width: Width, val imm: Label, val rd: Register) :
   override val uses get() = setOf<Register>()
   override fun replace(x: Register, y: Register) =
     LoadGlobal(width, imm, rd.r(x, y))
+  override fun replaceUses(x: Register, y: Register) = this
+  override fun replaceDefs(x: Register, y: Register) = replace(x, y)
 }
 
 class StoreGlobal(
@@ -370,17 +406,23 @@ class StoreGlobal(
   override val uses get() = setOf<Register>()
   override fun replace(x: Register, y: Register) =
     StoreGlobal(width, base.r(x, y), rt.r(x, y), imm)
+  override fun replaceUses(x: Register, y: Register) = replace(x, y)
+  override fun replaceDefs(x: Register, y: Register) = this
 }
 
 sealed class JumpLabel(val inst: String, val label: Label) : PsuedoInstruction {
   override val text get() = "$inst\t${escape(label.name)}"
   override fun replace(x: Register, y: Register) = this
+  override fun replaceUses(x: Register, y: Register) = this
+  override fun replaceDefs(x: Register, y: Register) = this
 }
 
 sealed class CallLabel(inst: String, label: Label) : JumpLabel(inst, label) {
   override val defs get() = callerSaveRegs.toSet()
   override val uses get() = setOf<Register>()
   override fun replace(x: Register, y: Register) = this
+  override fun replaceUses(x: Register, y: Register) = this
+  override fun replaceDefs(x: Register, y: Register) = this
 }
 
 class Call(label: Label) : CallLabel("call", label)
@@ -395,6 +437,8 @@ class JumpReg(val src: Register) : PsuedoInstruction {
   override val defs get() = setOf<Register>()
   override val uses get() = setOf(src)
   override fun replace(x: Register, y: Register) = JumpReg(src.r(x, y))
+  override fun replaceUses(x: Register, y: Register) = replace(x, y)
+  override fun replaceDefs(x: Register, y: Register) = this
 }
 
 object Ret : PsuedoInstruction {
@@ -402,4 +446,6 @@ object Ret : PsuedoInstruction {
   override val defs get() = setOf<Register>()
   override val uses get() = setOf<Register>()
   override fun replace(x: Register, y: Register) = this
+  override fun replaceUses(x: Register, y: Register) = this
+  override fun replaceDefs(x: Register, y: Register) = this
 }

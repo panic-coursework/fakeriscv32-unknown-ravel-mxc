@@ -1,7 +1,7 @@
 package org.altk.lab.mxc
 
 import org.altk.lab.mxc.ast.*
-import org.altk.lab.mxc.codegen.asm
+import org.altk.lab.mxc.codegen.*
 import org.altk.lab.mxc.ir.IrGenerationContext
 import org.altk.lab.mxc.ir.Module
 import org.altk.lab.mxc.recognizer.MxLexer
@@ -30,8 +30,18 @@ fun ojMain() {
     val raw = program.ast()
     val tree = transformers.fold(raw) { ast, trans -> trans.transform(ast) }
     val ir = IrGenerationContext(tree, false).ir()
-    val code = asm("stdin", ir).text
-    File("output.s").writeText(code)
+    val code = asm("stdin", ir)
+    val transformersAsm = listOf(
+      RemoveNoOps(),
+      AllocateRegisters(),
+      RemoveRedundantJumps(),
+      UseZeroReg(),
+      RemoveNoOps(),
+      DeduplicateRegs(),
+      RemoveUnreachableDefinitionsInBlock(),
+    )
+    val optimized = transformersAsm.fold(code) { x, t -> t.transform(x) }
+    File("output.s").writeText(optimized.text)
     val builtin =
       ir.javaClass.classLoader.getResource("builtins.s")!!.readBytes()
     File("builtin.s").writeBytes(builtin)
@@ -67,7 +77,7 @@ fun main(args: Array<String>) {
     )
     val raw = program.ast()
     val tree = transformers.fold(raw) { ast, trans -> trans.transform(ast) }
-    return IrGenerationContext(tree).ir()
+    return IrGenerationContext(tree, false).ir()
   }
 
   when (args[0]) {
@@ -116,7 +126,19 @@ fun main(args: Array<String>) {
 
     "codegen" -> {
       try {
-        println(asm(filename, ir()).text)
+        val raw = asm(filename, ir())
+        val transformers = listOf(
+          RemoveNoOps(),
+          AllocateRegisters(),
+          RemoveRedundantJumps(),
+          UseZeroReg(),
+          RemoveNoOps(),
+          DeduplicateRegs(),
+          RemoveUnreachableDefinitionsInBlock(),
+        )
+        File("raw.s").writeText(raw.text)
+        val code = transformers.fold(raw) { x, t -> t.transform(x) }
+        println(code.text)
       } catch (e: MxcError) {
         e.print()
         exitProcess(1)

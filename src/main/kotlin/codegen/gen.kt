@@ -15,8 +15,7 @@ fun asm(file: String, irModule: Module): TranslationUnit {
   return TranslationUnit(file, funcs.map { asm(it) }, vars.map { asm(it) })
 }
 
-private fun asm(ir: FunctionDefinition) =
-  allocateRegisters(FunctionCodegenContext(ir).asm())
+private fun asm(ir: FunctionDefinition) = FunctionCodegenContext(ir).asm()
 
 private fun asm(ir: GlobalVariableDeclaration) = GlobalVariable(
   Label(ir.id.name),
