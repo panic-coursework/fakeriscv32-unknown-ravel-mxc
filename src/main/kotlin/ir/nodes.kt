@@ -250,6 +250,11 @@ sealed class Operation(val result: LocalIdentifier, val type: Type) :
   val value: Value<*> get() = valueOf(result, type)
 }
 
+class Move(val src: Value<*>, val dest: LocalIdentifier) :
+  Operation(dest, src.type) {
+  override val text get() = "${dest.text} = ${src.text}"
+}
+
 sealed class BinaryOperation(
   result: LocalIdentifier,
   val lhs: Value<*>,

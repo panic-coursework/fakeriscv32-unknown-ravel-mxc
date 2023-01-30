@@ -12,7 +12,8 @@ import org.altk.lab.mxc.ast.NullLiteral as AstNullLiteral
 import org.altk.lab.mxc.ast.StringLiteral as AstStringLiteral
 import org.altk.lab.mxc.type.Type as AstType
 
-class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
+class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
+  TypecheckRecord(ast) {
   private val AstType.ir: Type get() = ir(this)
   fun ir(type: AstType) = when (type) {
     MxInt -> Int32Type
@@ -32,7 +33,7 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
   val valueFromReference = HashMap<ReferenceRecord, Value<*>>()
   val typeFromStruct = HashMap<String, MxStructType>()
 
-  private class FunctionContext(val ir: IrGenerationContext) {
+  private class FunctionContext(val ir: IrGenerationContext, val ssa: Boolean) {
     val nextIndex = HashMap<String, Int>()
     val blocks = mutableListOf<BasicBlockContext>()
     fun nextId(name: String): LocalNamedIdentifier {
@@ -42,13 +43,13 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
     }
 
     fun createBasicBlock(name: String): BasicBlockContext {
-      val ctx = BasicBlockContext(this, Label(nextId(name)))
+      val ctx = BasicBlockContext(this, Label(nextId(name)), ssa)
       blocks.add(ctx)
       return ctx
     }
 
     fun createBasicBlockWithName(name: String): BasicBlockContext {
-      val ctx = BasicBlockContext(this, Label(LocalNamedIdentifier(name)))
+      val ctx = BasicBlockContext(this, Label(LocalNamedIdentifier(name)), ssa)
       blocks.add(ctx)
       return ctx
     }
@@ -75,7 +76,11 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
     }
   }
 
-  private class BasicBlockContext(val func: FunctionContext, val label: Label) {
+  private class BasicBlockContext(
+    val func: FunctionContext,
+    val label: Label,
+    val ssa: Boolean,
+  ) {
     val body = mutableListOf<Instruction>()
     val ir get() = func.ir
     private val AstType.ir: Type get() = this@BasicBlockContext.ir.ir(this)
@@ -89,11 +94,15 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
 
     private fun registerReference(ref: ReferenceRecord) {
       if (!ir.valueFromReference.containsKey(ref)) {
-        val id = func.nextId(ref.binding.name + ".addr")
+        val id = func.nextId(ref.binding.name)
         val ty = ref.binding.type.ir
-        val value = valueOf(id, PointerType(ty))
+        val value = valueOf(id, if (ssa) PointerType(ty) else ty)
         ir.valueFromReference[ref] = value
-        body.add(Alloca(id, ty))
+        if (ssa) {
+          body.add(Alloca(id, ty))
+        } else {
+          body.add(Move(valueOf(IntegerLiteral(0), Int32Type), id))
+        }
       }
     }
 
@@ -191,7 +200,7 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
   ): FunctionDefinition {
     val ty =
       func.env.outerEnv!!.getBinding(null, func.id.name).type as MxFunction
-    val ctx = FunctionContext(this)
+    val ctx = FunctionContext(this, ssa)
     val thisArg = class_?.let {
       valueOf(
         LocalNamedIdentifier("this"),
@@ -201,11 +210,17 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
     val thisArgs = thisArg?.let { listOf(it) } ?: listOf()
     val params = ty.params
       .zip(func.params)
-      .map { valueOf(ctx.nextId(it.second.id.name), it.first.ir) }
+      .map { (type, param) -> valueOf(ctx.nextId(param.id.name), type.ir) }
     val block = ctx.createBasicBlockWithName("entry")
-    block.registerEnv(func.env)
-    block.body += func.params.mapIndexed { i, param ->
-      Store(param.id.value.operand, params[i])
+    if (ssa) {
+      block.registerEnv(func.env)
+      block.body += func.params.mapIndexed { i, param ->
+        Store(param.id.value.operand, params[i])
+      }
+    } else {
+      func.params.zip(params).forEach { (ast, value) ->
+        valueFromReference[references[ast.id]!!] = value
+      }
     }
     try {
       val exit = ir(block, func.body, null)
@@ -349,7 +364,11 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
       node.declarations.fold(entry) { block, decl ->
         decl.init?.let {
           val res = ir(block, it)
-          res.exit.body.add(Store(decl.id.value.operand, res.result!!))
+          res.exit.body.add(if (ssa) {
+            Store(decl.id.value.operand, res.result!!)
+          } else {
+            Move(res.result!!, decl.id.value.operand as LocalIdentifier)
+          })
           res.exit
         } ?: entry
       }
@@ -385,7 +404,12 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
       is AssignmentExpression -> {
         val lhs = getLhsPointer(entry, node.left)
         val rhs = ir(lhs.exit, node.right)
-        rhs.exit.body.add(Store(lhs.result!!.operand, rhs.result!!))
+        val lhsPointer = lhs.result!!.operand
+        if (!ssa && node.left is AstIdentifier && lhsPointer is LocalIdentifier) {
+          rhs.exit.body.add(Move(rhs.result!!, lhsPointer))
+        } else {
+          rhs.exit.body.add(Store(lhsPointer, rhs.result!!))
+        }
         ExpressionResult(rhs.exit, null)
       }
 
@@ -530,7 +554,6 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
             Triple(obj.exit, func, obj.result)
           }
 
-          // TODO: class call
           is AstIdentifier ->
             Triple(entry, GlobalNamedIdentifier(node.callee.name), null)
 
@@ -566,8 +589,12 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
       is AstIdentifier -> {
         // TODO: generate closure if it's a function
         val ptr = getLhsPointer(entry, node)
-        val res = Load(entry.func.nextId(node.name), ptr.result!!.asType())
-        resFromOp(ptr.exit, res)
+        if (!ssa && ptr.result!!.operand is LocalIdentifier) {
+          ptr
+        } else {
+          val res = Load(entry.func.nextId(node.name), ptr.result!!.asType())
+          resFromOp(ptr.exit, res)
+        }
       }
 
       is MemberExpression -> {
@@ -578,8 +605,13 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
 
       is UpdateExpression -> {
         val target = getLhsPointer(entry, node.argument)
-        val load =
+        val mem =
+          ssa || node.argument !is AstIdentifier || target.result!!.operand !is LocalIdentifier
+        val load = if (mem) {
           Load(entry.func.nextId("update.value"), target.result!!.asType())
+        } else {
+          Move(target.result!!, entry.func.nextId("update.value"))
+        }
         val res = Int32BinaryOperation(
           entry.func.nextId("update.result"),
           when (node.operator) {
@@ -589,7 +621,11 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
           load.value.asType(),
           Value(IntegerLiteral(1), Int32Type),
         )
-        val store = Store(target.result.operand, res.value)
+        val store = if (mem) {
+          Store(target.result.operand, res.value)
+        } else {
+          Move(res.value, target.result.operand as LocalIdentifier)
+        }
         entry.body += listOf(load, res, store)
         ExpressionResult(
           entry, when (node) {
@@ -760,6 +796,7 @@ class IrGenerationContext(ast: Program) : TypecheckRecord(ast) {
 
     is PrefixUpdateExpression -> {
       val target = getLhsPointer(entry, node.argument)
+      if (!ssa) TODO("ssa")
       val load =
         Load(entry.func.nextId("update.value"), target.result!!.asType())
       val res = Int32BinaryOperation(

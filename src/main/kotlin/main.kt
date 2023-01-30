@@ -29,7 +29,7 @@ fun ojMain() {
     )
     val raw = program.ast()
     val tree = transformers.fold(raw) { ast, trans -> trans.transform(ast) }
-    val ir = IrGenerationContext(tree).ir()
+    val ir = IrGenerationContext(tree, false).ir()
     val code = asm("stdin", ir).text
     File("output.s").writeText(code)
     val builtin =

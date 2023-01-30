@@ -33,12 +33,13 @@ private fun asciz(ir: Operand): ByteArray = when (ir) {
 }
 
 private class FunctionCodegenContext(private val func: FunctionDefinition) {
-  private val virtRegs = ((func.args + func.body.flatMap {
+  private val virtRegs = (func.args + func.body.flatMap {
     it.body.filterIsInstance<Operation>().map { op -> op.value }
-  }).map { value ->
-    val id = value.operand as LocalIdentifier
-    Pair(id, VirtualRegister("var.${id.name}", null))
-  }).toMap()
+  }).map {
+    it.operand as LocalIdentifier
+  }.associateWith {
+    VirtualRegister("var.${it.name}", null)
+  }
 
   private val LocalIdentifier.R get() = virtRegs[this]!!
 
@@ -139,6 +140,7 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
     is Icmp -> asm(ir)
     is Int32BinaryOperation -> asm(ir)
     is IntBinaryOperation -> asm(ir)
+    is Move -> listOf(loadVirtual(ir.src, ir.dest.R))
     is IrCall -> asm(ir)
     is GetElementPtr -> asm(ir)
     is IrLoad -> asm(ir)
