@@ -1,5 +1,6 @@
 package org.altk.lab.mxc.codegen
 
+import org.altk.lab.mxc.MxcInternalError
 import org.altk.lab.mxc.ir.*
 import org.altk.lab.mxc.ir.BasicBlock as IrBasicBlock
 import org.altk.lab.mxc.ir.Call as IrCall
@@ -40,7 +41,9 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
     VirtualRegister("var.${it.name}", null)
   }
 
-  private val LocalIdentifier.R get() = virtRegs[this]!!
+  private val LocalIdentifier.R
+    get() = virtRegs[this]
+      ?: throw MxcInternalError(null, "undefined ir register $this")
 
   private val allocas =
     func.body.flatMap { it.body.filterIsInstance<Alloca>() }

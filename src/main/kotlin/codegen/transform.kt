@@ -129,3 +129,8 @@ class RemoveUnreachableDefinitionsInBlock : Transformer() {
 class AllocateRegisters : Transformer() {
   override fun transform(node: Function) = allocateRegisters(node)
 }
+
+class NaiveAllocateRegisters : Transformer() {
+  override fun transform(node: Function) =
+    allocateRegisters(node, spillAll = true)
+}

@@ -2,13 +2,13 @@ package org.altk.lab.mxc.codegen
 
 import java.time.Instant
 
-fun allocateRegisters(func: Function): Function {
+fun allocateRegisters(func: Function, spillAll: Boolean = false): Function {
   val regs = func.body
     .flatMap { block -> block.body.flatMap { it.defs + it.uses } }
     .toSet()
   val spillsNeeded =
     regs.filter { it is VirtualRegister && it.fallback == null }.toSet()
-  if (spillsNeeded.size > 10000) {
+  if (spillAll || spillsNeeded.size > 10000) {
     println("# too many spills for ${func.name} (${spillsNeeded.size} spills), giving up")
     return fallback(rewriteProgram(func, spillsNeeded))
   }

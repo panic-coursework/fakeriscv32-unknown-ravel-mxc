@@ -39,16 +39,20 @@ class Function(
   private val prelude
     get() = BasicBlock(
       Label(name),
-      listOf(IntI(IntI.Type.ADDI, "sp".R, (-frameSize).L, "sp".R)),
+      if (frameSize == 0) listOf() else {
+        listOf(IntI(IntI.Type.ADDI, "sp".R, (-frameSize).L, "sp".R))
+      },
       setOf(body.firstOrNull()?.label?.name ?: exitLabel(name).name),
     )
   private val epilogue
     get() = BasicBlock(
       exitLabel(name),
-      listOf(
-        IntI(IntI.Type.ADDI, "sp".R, frameSize.L, "sp".R),
-        Ret,
-      ),
+      if (frameSize == 0) listOf(Ret) else {
+        listOf(
+          IntI(IntI.Type.ADDI, "sp".R, frameSize.L, "sp".R),
+          Ret,
+        )
+      },
       setOf(),
     )
   val blocks = listOf(prelude) + body + epilogue

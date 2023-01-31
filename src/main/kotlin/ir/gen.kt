@@ -4,6 +4,7 @@ import org.altk.lab.mxc.MxcInternalError
 import org.altk.lab.mxc.ast.*
 import org.altk.lab.mxc.ast.Identifier
 import org.altk.lab.mxc.type.*
+import org.altk.lab.mxc.ast.Transformer as AstTransformer
 import org.altk.lab.mxc.ast.FunctionDeclaration as AstFunctionDeclaration
 import org.altk.lab.mxc.ast.Identifier as AstIdentifier
 import org.altk.lab.mxc.ast.IntegerLiteral as AstIntegerLiteral
@@ -39,7 +40,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
     fun nextId(name: String): LocalNamedIdentifier {
       val ix = nextIndex[name] ?: 0
       nextIndex[name] = ix + 1
-      return LocalNamedIdentifier("$name.$ix")
+      return LocalNamedIdentifier(if (ix > 0) "$name.$ix" else name)
     }
 
     fun createBasicBlock(name: String): BasicBlockContext {
@@ -124,7 +125,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
   private fun collectStrings(): List<ModuleItem> {
     val decls = mutableListOf<ModuleItem>()
 
-    class CollectStringsTransform : Transformer() {
+    class CollectStringsTransform : AstTransformer() {
       var nextId = 0
       override fun transform(node: AstStringLiteral): AstStringLiteral {
         val id = GlobalNamedIdentifier(".str.$nextId")

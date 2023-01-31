@@ -1,14 +1,9 @@
 package org.altk.lab.mxc
 
-import org.altk.lab.mxc.ast.*
-import org.altk.lab.mxc.codegen.*
-import org.altk.lab.mxc.ir.IrGenerationContext
-import org.altk.lab.mxc.ir.Module
+import org.altk.lab.mxc.ast.Source
 import org.altk.lab.mxc.recognizer.MxLexer
 import org.altk.lab.mxc.recognizer.MxParser
 import org.altk.lab.mxc.recognizer.MxParserBaseVisitor
-import org.altk.lab.mxc.recognizer.parse
-import org.altk.lab.mxc.type.typecheck
 import org.antlr.v4.gui.TestRig
 import org.antlr.v4.runtime.*
 import java.io.File
@@ -18,44 +13,32 @@ import kotlin.system.exitProcess
 fun ojMain() {
   try {
     val source = Source("stdin", System.`in`.readAllBytes().decodeToString())
-    val program = parse(source)
-    val transformers = listOf(
-      InjectReturnZeroToMain(),
-      MoveGlobalVarsToMain(),
-      GenerateEmptyConstructors(),
-      DesugarConstructors(),
-      DesugarMultiDimensionalNewExpressions(),
-      DesugarClassFields(),
-    )
-    val raw = program.ast()
-    val tree = transformers.fold(raw) { ast, trans -> trans.transform(ast) }
-    val ir = IrGenerationContext(tree, false).ir()
-    val code = asm("stdin", ir)
-    val transformersAsm = listOf(
-      RemoveNoOps(),
-      AllocateRegisters(),
-      RemoveRedundantJumps(),
-      UseZeroReg(),
-      RemoveNoOps(),
-      DeduplicateRegs(),
-      RemoveUnreachableDefinitionsInBlock(),
-    )
-    val optimized = transformersAsm.fold(code) { x, t -> t.transform(x) }
-    File("output.s").writeText(optimized.text)
-    val builtin =
-      ir.javaClass.classLoader.getResource("builtins.s")!!.readBytes()
-    File("builtin.s").writeBytes(builtin)
+    val module = codegen(source, Options())
+    File("output.s").writeText(module.text)
+    File("builtin.s").writeBytes(getBuiltin())
   } catch (e: MxcError) {
     e.print()
     exitProcess(1)
   }
 }
 
+private fun run(f: () -> Unit) {
+  try {
+    f()
+  } catch (e: MxcError) {
+    e.print()
+    exitProcess(1)
+  }
+}
+
+private fun basename(path: String) = path.split('/').last()
+
 fun main(args: Array<String>) {
   if (args.isEmpty()) {
     error("Usage: app <command> [file]")
   }
   if (args[0] == "oj") return ojMain()
+
   val inputStream = if (args.size > 1) {
     FileInputStream(args[1])
   } else {
@@ -65,85 +48,32 @@ fun main(args: Array<String>) {
   val filename = if (args.size > 1) basename(args[1]) else "stdin"
   val source = Source(filename, sourceText)
 
-  fun ir(): Module {
-    val program = parse(source)
-    val transformers = listOf(
-      InjectReturnZeroToMain(),
-      MoveGlobalVarsToMain(),
-      GenerateEmptyConstructors(),
-      DesugarConstructors(),
-      DesugarMultiDimensionalNewExpressions(),
-      DesugarClassFields(),
-    )
-    val raw = program.ast()
-    val tree = transformers.fold(raw) { ast, trans -> trans.transform(ast) }
-    return IrGenerationContext(tree, false).ir()
-  }
-
   when (args[0]) {
-    "parse" -> {
+    "parse" -> run {
       val program = parse(source)
       val rules = MxParser.ruleNames.toList()
       println(program.tree.toStringTree(rules))
     }
 
-    "ast" -> {
-      val program = parse(source)
-      try {
-        val tree = program.ast()
-        println(tree)
-      } catch (e: MxcError) {
-        e.print()
-        exitProcess(1)
+    "ast" -> run { println(sourceTree(source)) }
+
+    "tyck" -> run {
+      val rec = typecheck(source, Options.typecheckOnly)
+      println("Global bindings:")
+      for (binding in rec.globalEnv.bindings) {
+        println("${binding.value.name}: ${binding.value.type}")
       }
+      println("")
+      println(rec.ast.toString(rec))
     }
 
-    "tyck" -> {
-      val program = parse(source)
-      try {
-        val tree = InjectReturnZeroToMain().transform(program.ast())
-        val rec = typecheck(tree)
-        println("Global bindings:")
-        for (binding in rec.globalEnv.bindings) {
-          println("${binding.value.name}: ${binding.value.type}")
-        }
-        println("")
-        println(tree.toString(rec))
-      } catch (e: MxcError) {
-        e.print()
-        exitProcess(1)
-      }
-    }
+    "ir" -> run { println(ir(source).text) }
+    "ir-no-ssa" -> run { println(ir(source, Options.irNoSsa).text) }
 
-    "ir" -> {
-      try {
-        println(ir().text)
-      } catch (e: MxcError) {
-        e.print()
-        exitProcess(1)
-      }
-    }
-
-    "codegen" -> {
-      try {
-        val raw = asm(filename, ir())
-        val transformers = listOf(
-          RemoveNoOps(),
-          AllocateRegisters(),
-          RemoveRedundantJumps(),
-          UseZeroReg(),
-          RemoveNoOps(),
-          DeduplicateRegs(),
-          RemoveUnreachableDefinitionsInBlock(),
-        )
-        File("raw.s").writeText(raw.text)
-        val code = transformers.fold(raw) { x, t -> t.transform(x) }
-        println(code.text)
-      } catch (e: MxcError) {
-        e.print()
-        exitProcess(1)
-      }
-    }
+    "codegen" -> run { println(codegen(source).text) }
+    "codegen-no-ssa" -> run { println(codegen(source, Options.irNoSsa).text) }
+    "codegen-no-opt" ->
+      run { println(codegen(source, Options.noOptimizations).text) }
 
     "testrig" -> {
       val input = CharStreams.fromString(sourceText)
@@ -216,5 +146,3 @@ fun main(args: Array<String>) {
     else -> error("unknown command ${args[0]}")
   }
 }
-
-private fun basename(path: String) = path.split('/').last()

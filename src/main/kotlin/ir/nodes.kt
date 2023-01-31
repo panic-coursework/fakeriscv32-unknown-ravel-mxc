@@ -163,7 +163,25 @@ class Label(id: LocalIdentifier) : Value<LabelType>(id, LabelType)
 
 
 sealed interface ModuleItem : Node
-sealed interface Instruction : Node
+sealed interface Instruction : Node {
+  fun replace(x: LocalIdentifier, y: Operand): Instruction
+}
+
+private fun <T : Type> Value<T>.r(x: LocalIdentifier, y: Operand) =
+  if (operand == x) Value(y, type) else this
+
+private fun Label.r(x: LocalIdentifier, y: Operand) =
+  if (operand == x) Label(y as LocalIdentifier) else this
+
+private fun Operand.r(x: LocalIdentifier, y: Operand) =
+  if (this == x) y else this
+
+private fun LocalIdentifier.r(x: LocalIdentifier, y: Operand) =
+  if (this == x) y else this
+
+private fun LocalIdentifier.rI(x: LocalIdentifier, y: Operand) =
+  if (this == x) y as LocalIdentifier else this
+
 
 class Module(val body: List<ModuleItem>) : Node {
   override val text = body.joinToString("\n\n") { it.text }
@@ -219,11 +237,14 @@ sealed interface TerminatorInstruction : Instruction {
 class ReturnValue(val value: Value<*>) : TerminatorInstruction {
   override val successors get() = setOf<Label>()
   override val text get() = "ret ${value.text}"
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    ReturnValue(value.r(x, y))
 }
 
 object ReturnVoid : TerminatorInstruction {
   override val successors get() = setOf<Label>()
   override val text = "ret void"
+  override fun replace(x: LocalIdentifier, y: Operand) = this
 }
 
 class BranchConditional(
@@ -233,16 +254,21 @@ class BranchConditional(
 ) : TerminatorInstruction {
   override val successors get() = setOf(consequent, alternate)
   override val text get() = "br ${condition.text}, ${consequent.text}, ${alternate.text}"
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    BranchConditional(condition.r(x, y), consequent.r(x, y), alternate.r(x, y))
 }
 
 class BranchUnconditional(val dest: Label) : TerminatorInstruction {
   override val successors get() = setOf(dest)
   override val text get() = "br ${dest.text}"
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    BranchUnconditional(dest.r(x, y))
 }
 
 object Unreachable : TerminatorInstruction {
   override val successors get() = setOf<Label>()
   override val text = "unreachable"
+  override fun replace(x: LocalIdentifier, y: Operand) = this
 }
 
 sealed class Operation(val result: LocalIdentifier, val type: Type) :
@@ -253,15 +279,17 @@ sealed class Operation(val result: LocalIdentifier, val type: Type) :
 class Move(val src: Value<*>, val dest: LocalIdentifier) :
   Operation(dest, src.type) {
   override val text get() = "${dest.text} = ${src.text}"
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    Move(src.r(x, y), dest.rI(x, y))
 }
 
 sealed class BinaryOperation(
   result: LocalIdentifier,
-  val lhs: Value<*>,
-  val rhs: Value<*>,
+  open val lhs: Value<*>,
+  open val rhs: Value<*>,
   val op: String,
-  val operandType: Type,
-  val resultType: Type = operandType,
+  open val operandType: Type,
+  open val resultType: Type = operandType,
 ) : Operation(result, resultType) {
   override val text
     get() = "${result.text} = $op ${operandType.text} ${lhs.operand.text}, ${rhs.operand.text}"
@@ -270,8 +298,8 @@ sealed class BinaryOperation(
 class Int32BinaryOperation(
   result: LocalIdentifier,
   val opType: Op,
-  lhs: Value<Int32Type>,
-  rhs: Value<Int32Type>,
+  override val lhs: Value<Int32Type>,
+  override val rhs: Value<Int32Type>,
 ) : BinaryOperation(result, lhs, rhs, opType.toString(), Int32Type) {
   enum class Op {
     ADD, SUB, MUL, SDIV, SREM, SHL, ASHR;
@@ -279,15 +307,18 @@ class Int32BinaryOperation(
 
     override fun toString() = name.lowercase()
   }
+
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    Int32BinaryOperation(result.rI(x, y), opType, lhs.r(x, y), rhs.r(x, y))
 }
 
 class IntBinaryOperation(
   result: LocalIdentifier,
-  type: IntType,
+  override val resultType: IntType,
   val opType: Op,
-  lhs: Value<IntType>,
-  rhs: Value<IntType>,
-) : BinaryOperation(result, lhs, rhs, opType.toString(), type) {
+  override val lhs: Value<IntType>,
+  override val rhs: Value<IntType>,
+) : BinaryOperation(result, lhs, rhs, opType.toString(), resultType) {
   enum class Op {
     OR, AND, XOR;
 
@@ -297,14 +328,23 @@ class IntBinaryOperation(
       XOR -> "xor"
     }
   }
+
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    IntBinaryOperation(
+      result.rI(x, y),
+      resultType,
+      opType,
+      lhs.r(x, y),
+      rhs.r(x, y),
+    )
 }
 
 class Icmp(
   result: LocalIdentifier,
   val cond: Condition,
   val paramType: ComparableType,
-  lhs: Value<ComparableType>,
-  rhs: Value<ComparableType>,
+  override val lhs: Value<ComparableType>,
+  override val rhs: Value<ComparableType>,
 ) : BinaryOperation(result, lhs, rhs, "icmp $cond", paramType, BoolType) {
   enum class Condition {
     EQ, NE, SGT, SGE, SLT, SLE;
@@ -312,6 +352,9 @@ class Icmp(
 
     override fun toString() = name.lowercase()
   }
+
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    Icmp(result.rI(x, y), cond, paramType, lhs.r(x, y), rhs.r(x, y))
 }
 
 class Phi(result: LocalIdentifier, val cases: List<Case>) :
@@ -323,6 +366,12 @@ class Phi(result: LocalIdentifier, val cases: List<Case>) :
 
   override val text
     get() = "${result.text} = phi ${type.text} ${cases.joinToString(", ")}"
+
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    Phi(
+      result.rI(x, y),
+      cases.map { Case(it.value.r(x, y), it.condition.r(x, y)) },
+    )
 }
 
 
@@ -346,6 +395,9 @@ class Call(
       )
     }
   }
+
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    Call(result.rI(x, y), function.r(x, y), args.map { it.r(x, y) })
 }
 
 class CallVoid(val function: Value<FunctionType>, val args: List<Value<*>>) :
@@ -365,6 +417,9 @@ class CallVoid(val function: Value<FunctionType>, val args: List<Value<*>>) :
       )
     }
   }
+
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    CallVoid(function.r(x, y), args.map { it.r(x, y) })
 }
 
 
@@ -375,6 +430,9 @@ class ExtractValue(
 ) : Operation(result, target.type.subtypes[index]) {
   override val text
     get() = "${result.text} = extractvalue ${target.text}, $index"
+
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    ExtractValue(result.rI(x, y), target.r(x, y), index)
 }
 
 class InsertValue(
@@ -385,22 +443,32 @@ class InsertValue(
 ) : Operation(result, target.type) {
   override val text
     get() = "${result.text} = insertvalue ${target.text}, ${rhs.text}, $index"
+
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    InsertValue(result.rI(x, y), target.r(x, y), rhs.r(x, y), index)
 }
 
 
 class Alloca(result: LocalIdentifier, val content: Type) :
   Operation(result, PointerType(content)) {
   override val text get() = "${result.text} = alloca ${content.text}"
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    Alloca(result.rI(x, y), content)
 }
 
 class Load(result: LocalIdentifier, val target: Value<PointerType>) :
   Operation(result, target.type.pointee!!) {
   override val text
     get() = "${result.text} = load ${target.type.pointee!!.text}, ptr ${target.operand.text}"
+
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    Load(result.rI(x, y), target.r(x, y))
 }
 
 class Store(val target: Operand, val content: Value<*>) : Instruction {
   override val text get() = "store ${content.text}, ptr ${target.text}"
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    Store(target.r(x, y), content.r(x, y))
 }
 
 sealed interface GepIndex {
@@ -441,4 +509,12 @@ class GetElementPtr(
       "${result.text} = getelementptr inbounds ${derefedType.text}, ptr ${target.operand.text}, ${
         indices.joinToString(", ") { it.text }
       }"
+
+  override fun replace(x: LocalIdentifier, y: Operand) =
+    GetElementPtr(result.rI(x, y), target.r(x, y), indices.map {
+      when (it) {
+        is GepIndexLiteral -> it
+        is GepIndexValue -> GepIndexValue(it.index.r(x, y))
+      }
+    })
 }
