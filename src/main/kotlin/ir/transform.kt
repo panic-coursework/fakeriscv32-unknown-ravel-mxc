@@ -29,3 +29,28 @@ class PromoteAllocasToRegisters : Transformer() {
   override fun transform(node: FunctionDefinition) =
     PromoteAllocasToRegistersContext(node).emit()
 }
+
+class RemoveUnusedInstructions : Transformer() {
+  override fun transform(node: FunctionDefinition): FunctionDefinition {
+    val ops = node.body
+      .flatMap { it.body }
+      .filterIsInstance<Operation>()
+      .associateBy { it.result }
+    val uses = node.body.flatMap { it.body }.associateWith { it.uses }
+    val users = uses
+      .flatMap { (node, uses) -> uses.map { Pair(it, node) } }
+      .groupBy { (used, _) -> used }
+      .mapValues { (_, v) -> v.map { it.second } }
+      .toMutableMap()
+    val removed = HashSet<Operation>()
+    while (true) {
+      val unused = users.filterValues { l -> l.all { it in removed } }.keys
+      if (unused.isEmpty()) break
+      removed.addAll(unused.map { ops[it]!! })
+    }
+    val body = node.body.map { block ->
+      BasicBlock(block.label, block.body.filter { it !in removed })
+    }
+    return FunctionDefinition(node.id, node.args, node.returnType, body)
+  }
+}

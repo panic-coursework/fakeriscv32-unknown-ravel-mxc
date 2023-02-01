@@ -165,16 +165,22 @@ class Label(id: LocalIdentifier) : Value<LabelType>(id, LabelType)
 sealed interface ModuleItem : Node
 sealed interface Instruction : Node {
   fun replace(x: LocalIdentifier, y: Operand): Instruction
+  val uses: List<LocalIdentifier>
 }
 
 private fun <T : Type> Value<T>.r(x: LocalIdentifier, y: Operand) =
   if (operand == x) Value(y, type) else this
+
+private val Value<*>.u get() = operand.u
 
 private fun Label.r(x: LocalIdentifier, y: Operand) =
   if (operand == x) Label(y as LocalIdentifier) else this
 
 private fun Operand.r(x: LocalIdentifier, y: Operand) =
   if (this == x) y else this
+
+private val Operand.u
+  get() = if (this is LocalIdentifier) listOf(this) else listOf()
 
 private fun LocalIdentifier.r(x: LocalIdentifier, y: Operand) =
   if (this == x) y else this
@@ -237,6 +243,7 @@ sealed interface TerminatorInstruction : Instruction {
 class ReturnValue(val value: Value<*>) : TerminatorInstruction {
   override val successors get() = setOf<Label>()
   override val text get() = "ret ${value.text}"
+  override val uses get() = value.u
   override fun replace(x: LocalIdentifier, y: Operand) =
     ReturnValue(value.r(x, y))
 }
@@ -244,6 +251,7 @@ class ReturnValue(val value: Value<*>) : TerminatorInstruction {
 object ReturnVoid : TerminatorInstruction {
   override val successors get() = setOf<Label>()
   override val text = "ret void"
+  override val uses = listOf<LocalIdentifier>()
   override fun replace(x: LocalIdentifier, y: Operand) = this
 }
 
@@ -254,6 +262,7 @@ class BranchConditional(
 ) : TerminatorInstruction {
   override val successors get() = setOf(consequent, alternate)
   override val text get() = "br ${condition.text}, ${consequent.text}, ${alternate.text}"
+  override val uses get() = condition.u
   override fun replace(x: LocalIdentifier, y: Operand) =
     BranchConditional(condition.r(x, y), consequent.r(x, y), alternate.r(x, y))
 }
@@ -261,6 +270,7 @@ class BranchConditional(
 class BranchUnconditional(val dest: Label) : TerminatorInstruction {
   override val successors get() = setOf(dest)
   override val text get() = "br ${dest.text}"
+  override val uses get() = listOf<LocalIdentifier>()
   override fun replace(x: LocalIdentifier, y: Operand) =
     BranchUnconditional(dest.r(x, y))
 }
@@ -268,6 +278,7 @@ class BranchUnconditional(val dest: Label) : TerminatorInstruction {
 object Unreachable : TerminatorInstruction {
   override val successors get() = setOf<Label>()
   override val text = "unreachable"
+  override val uses = listOf<LocalIdentifier>()
   override fun replace(x: LocalIdentifier, y: Operand) = this
 }
 
@@ -279,6 +290,7 @@ sealed class Operation(val result: LocalIdentifier, val type: Type) :
 class Move(val src: Value<*>, val dest: LocalIdentifier) :
   Operation(dest, src.type) {
   override val text get() = "${dest.text} = ${src.text}"
+  override val uses get() = src.u
   override fun replace(x: LocalIdentifier, y: Operand) =
     Move(src.r(x, y), dest.rI(x, y))
 }
@@ -293,6 +305,8 @@ sealed class BinaryOperation(
 ) : Operation(result, resultType) {
   override val text
     get() = "${result.text} = $op ${operandType.text} ${lhs.operand.text}, ${rhs.operand.text}"
+  @Suppress("LeakingThis")
+  override val uses get() = lhs.u + rhs.u
 }
 
 class Int32BinaryOperation(
@@ -364,6 +378,7 @@ class Phi(result: LocalIdentifier, val cases: List<Case>) :
       "[ ${value.operand.text}, ${condition.operand.text} ]"
   }
 
+  override val uses get() = cases.flatMap { it.value.u }
   override val text
     get() = "${result.text} = phi ${type.text} ${cases.joinToString(", ")}"
 
@@ -396,6 +411,7 @@ class Call(
     }
   }
 
+  override val uses get() = args.flatMap { it.u }
   override fun replace(x: LocalIdentifier, y: Operand) =
     Call(result.rI(x, y), function.r(x, y), args.map { it.r(x, y) })
 }
@@ -418,6 +434,7 @@ class CallVoid(val function: Value<FunctionType>, val args: List<Value<*>>) :
     }
   }
 
+  override val uses get() = listOf<LocalIdentifier>()
   override fun replace(x: LocalIdentifier, y: Operand) =
     CallVoid(function.r(x, y), args.map { it.r(x, y) })
 }
@@ -431,6 +448,7 @@ class ExtractValue(
   override val text
     get() = "${result.text} = extractvalue ${target.text}, $index"
 
+  override val uses get() = target.u
   override fun replace(x: LocalIdentifier, y: Operand) =
     ExtractValue(result.rI(x, y), target.r(x, y), index)
 }
@@ -444,6 +462,7 @@ class InsertValue(
   override val text
     get() = "${result.text} = insertvalue ${target.text}, ${rhs.text}, $index"
 
+  override val uses get() = target.u + rhs.u
   override fun replace(x: LocalIdentifier, y: Operand) =
     InsertValue(result.rI(x, y), target.r(x, y), rhs.r(x, y), index)
 }
@@ -452,6 +471,7 @@ class InsertValue(
 class Alloca(result: LocalIdentifier, val content: Type) :
   Operation(result, PointerType(content)) {
   override val text get() = "${result.text} = alloca ${content.text}"
+  override val uses get() = listOf<LocalIdentifier>()
   override fun replace(x: LocalIdentifier, y: Operand) =
     Alloca(result.rI(x, y), content)
 }
@@ -461,12 +481,14 @@ class Load(result: LocalIdentifier, val target: Value<PointerType>) :
   override val text
     get() = "${result.text} = load ${target.type.pointee!!.text}, ptr ${target.operand.text}"
 
+  override val uses get() = target.u
   override fun replace(x: LocalIdentifier, y: Operand) =
     Load(result.rI(x, y), target.r(x, y))
 }
 
 class Store(val target: Operand, val content: Value<*>) : Instruction {
   override val text get() = "store ${content.text}, ptr ${target.text}"
+  override val uses get() = target.u + content.u
   override fun replace(x: LocalIdentifier, y: Operand) =
     Store(target.r(x, y), content.r(x, y))
 }
@@ -510,6 +532,9 @@ class GetElementPtr(
         indices.joinToString(", ") { it.text }
       }"
 
+  override val uses
+    get() = target.u +
+      indices.filterIsInstance<GepIndexValue>().flatMap { it.index.u }
   override fun replace(x: LocalIdentifier, y: Operand) =
     GetElementPtr(result.rI(x, y), target.r(x, y), indices.map {
       when (it) {

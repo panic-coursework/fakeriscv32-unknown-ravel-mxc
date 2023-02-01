@@ -486,6 +486,7 @@ class DesugarClassFields : Transformer() {
     tyck = TypecheckRecord(node)
     return super.transform(node)
   }
+
   override fun transform(node: LeftHandSideExpression): LeftHandSideExpression =
     if (node is Identifier && tyck!!.references[node]!!.env is ClassEnvironmentRecord) {
       MemberExpression(
@@ -496,4 +497,98 @@ class DesugarClassFields : Transformer() {
     } else {
       super.transform(node)
     }
+}
+
+class MemoizePureFunctions : Transformer() {
+  private var tyck: TypecheckRecord? = null
+  override fun transform(node: Program): Program {
+    tyck = TypecheckRecord(node)
+    super.transform(node)
+    val extras = memoizeFunctions.associateWith { func ->
+      fun statusId() = Identifier(func.id.ctx, "${func.id.name}.uninitialized")
+      fun memoizedId() = Identifier(func.id.ctx, "${func.id.name}.memoized")
+      fun renamedId() = Identifier(func.id.ctx, "${func.id.name}.call")
+      val ctx = BuiltinSourceContext
+      val renamed = FunctionDeclaration(
+        func.ctx,
+        renamedId(),
+        func.params,
+        func.returnType,
+        func.body,
+      )
+      val status = VariableDeclaration(
+        ctx, BoolType(ctx),
+        listOf(VariableDeclarator(ctx, statusId(), BooleanLiteral(ctx, true))),
+      )
+      val decl = VariableDeclaration(
+        ctx, func.returnType,
+        listOf(VariableDeclarator(ctx, memoizedId(), null)),
+      )
+      val stub = FunctionDeclaration(
+        ctx, func.id,
+        listOf(),
+        func.returnType,
+        BlockStatement(
+          ctx,
+          listOf(
+            IfStatement(
+              ctx, statusId(),
+              BlockStatement(
+                ctx,
+                listOf(
+                  ExpressionStatement(
+                    ctx,
+                    AssignmentExpression(
+                      ctx, statusId(),
+                      BooleanLiteral(ctx, false),
+                    ),
+                  ),
+                  ExpressionStatement(
+                    ctx,
+                    AssignmentExpression(
+                      ctx, memoizedId(),
+                      CallExpression(ctx, renamedId(), listOf()),
+                    ),
+                  ),
+                ),
+              ),
+              null,
+            ),
+            ReturnStatement(ctx, memoizedId()),
+          ),
+        ),
+      )
+      listOf(renamed, status, decl, stub)
+    }
+
+    val body = node.body.flatMap {
+      if (it in memoizeFunctions) extras[it]!! else listOf(it)
+    }
+
+    return Program(node.ctx, body)
+  }
+
+  private var pure = true
+  private val memoizeFunctions = HashSet<FunctionDeclaration>()
+  override fun transform(node: FunctionDeclaration): FunctionDeclaration {
+    if (node.params.isNotEmpty() || node.id.name == "main") return node
+    pure = true
+    super.transform(node)
+    if (pure) {
+      memoizeFunctions.add(node)
+    }
+    return node
+  }
+
+  override fun transform(node: CallExpression): CallExpression {
+    pure = false
+    return node
+  }
+
+  override fun transform(node: Identifier): Identifier {
+    if (tyck!!.references[node]?.isGlobal == true) {
+      pure = false
+    }
+    return node
+  }
 }

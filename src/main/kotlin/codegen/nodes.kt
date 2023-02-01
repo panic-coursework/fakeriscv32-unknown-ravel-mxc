@@ -343,6 +343,7 @@ open class IntI(
 
 class Mv(src: Register, dest: Register) :
   IntI(Type.ADDI, src, ImmediateLiteral(0), dest) {
+  override val text get() = "mv\t${dest.text}, ${src.text}"
   override fun replace(x: Register, y: Register) = Mv(src.r(x, y), dest.r(x, y))
   override fun replaceUses(x: Register, y: Register) = Mv(src.r(x, y), dest)
   override fun replaceDefs(x: Register, y: Register) = Mv(src, dest.r(x, y))

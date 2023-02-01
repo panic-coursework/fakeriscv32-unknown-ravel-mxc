@@ -10,24 +10,21 @@ import java.io.File
 import java.io.FileInputStream
 import kotlin.system.exitProcess
 
-fun ojMain() {
-  try {
-    val source = Source("stdin", System.`in`.readAllBytes().decodeToString())
-    val module = codegen(source, Options())
-    File("output.s").writeText(module.text)
-    File("builtin.s").writeBytes(getBuiltin())
-  } catch (e: MxcError) {
-    e.print()
-    exitProcess(1)
-  }
-}
-
 private fun run(f: () -> Unit) {
   try {
     f()
   } catch (e: MxcError) {
     e.print()
     exitProcess(1)
+  }
+}
+
+fun ojMain() {
+  run {
+    val source = Source("stdin", System.`in`.readAllBytes().decodeToString())
+    val module = codegen(source)
+    File("output.s").writeText(module.text)
+    File("builtin.s").writeBytes(getBuiltin())
   }
 }
 
@@ -74,6 +71,8 @@ fun main(args: Array<String>) {
     "codegen-no-ssa" -> run { println(codegen(source, Options.irNoSsa).text) }
     "codegen-no-opt" ->
       run { println(codegen(source, Options.noOptimizations).text) }
+    "codegen-no-asm-opt" ->
+      run { println(codegen(source, Options.noAsmOptimizations).text) }
 
     "testrig" -> {
       val input = CharStreams.fromString(sourceText)

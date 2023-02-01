@@ -71,35 +71,12 @@ private fun rewriteProgram(
 }
 
 private fun buildGraph(func: Function): InterferenceGraph {
-  val blockByName = func.body.associateBy { it.label.name }
-  val successors = func.body.associateWith { block ->
-    block.successorNames.mapNotNull { blockByName[it] }.toSet()
-  }
-  val predecessors = func.body.associateWith { block ->
-    func.body.filter { successors[it]!!.contains(block) }.toSet()
-  }
-  val liveIn =
-    func.body.associateWith { HashSet<Register>() }.toMutableMap()
-  val liveOut = HashMap<BasicBlock, HashSet<Register>>()
-  val changes = mutableListOf(func.body.last())
-  do {
-    val block = changes.removeFirst()
-    val newIn = HashSet<Register>(liveIn[block]?.size ?: 4)
-    successors[block]!!.forEach { newIn.addAll(liveIn[it]!!) }
-    liveOut[block] = HashSet(newIn)
-    newIn.removeAll(block.defs)
-    newIn.addAll(block.uses)
-    val oldIn = liveIn[block]
-    if (oldIn == null || oldIn.size != newIn.size || !oldIn.containsAll(newIn)) {
-      liveIn[block] = newIn
-      changes.addAll(predecessors[block]!!)
-    }
-  } while (changes.isNotEmpty())
-//  func.body.forEach {
-//    println("${it.label.name} succ ${it.successorNames}")
-//    println("${it.label.name} -> in ${liveIn[it]}")
-//    println("${it.label.name} -> out ${liveOut[it]}")
-//  }
+  val liveOut = dfa(
+    func,
+    DfaDirection.BACKWARD,
+    func.body.associateWith { it.uses },
+    func.body.associateWith { it.defs },
+  ).out
 
   val graph = InterferenceGraph(mutableMapOf())
   func.body.forEach { block ->
@@ -118,6 +95,7 @@ private fun buildGraph(func: Function): InterferenceGraph {
       live.addAll(inst.uses)
     }
   }
+//  graph.edgesByNode.forEach { (x, y) -> y.forEach { println("${x.name} ${it.name}") } }
   return graph
 }
 
@@ -141,6 +119,7 @@ private class AllocContext(val func: Function) {
   val registers get() = func.body.flatMap { it.defs + it.uses }
   val degree = registers.associateWith { graph.degree(it) }.toMutableMap()
   val weight = mutableMapOf<Register, Int>()
+  val refCount = mutableMapOf<Register, Int>()
   val precolored = registers.filterIsInstance<PhysicalRegister>()
   val simplifyWorklist = mutableSetOf<Register>()
   val freezeWorklist = mutableSetOf<Register>()
@@ -213,13 +192,14 @@ private class AllocContext(val func: Function) {
         (inst.defs + inst.uses).forEach { reg ->
           if (lifetimeStart[reg] == null) lifetimeStart[reg] = instructionId
           lifetimeEnd[reg] = instructionId
-          weight[reg] = weight.getOrDefault(reg, 0) + 1
+          refCount[reg] = refCount.getOrDefault(reg, 0) + 1
         }
       }
     }
     for (reg in registers) {
-      weight[reg] = weight.getOrDefault(reg, 0) +
+      weight[reg] = refCount.getOrDefault(reg, 0) +
         (if (reg.name.startsWith("spill")) -2 else 0) +
+        (if (reg.name.startsWith("save")) 2048 else 0) +
         (lifetimeEnd.getOrDefault(reg, 0) - lifetimeStart.getOrDefault(reg, 0))
     }
   }
@@ -250,10 +230,12 @@ private class AllocContext(val func: Function) {
   fun coalesce() {
     val mv = worklistMoves.first()
     worklistMoves.remove(mv)
+//    println("considering mv ${mv.dest} ${mv.src}")
 
     val x = mv.dest.resolve
     val y = mv.src.resolve
     val (u, v) = if (y is PhysicalRegister) Pair(y, x) else Pair(x, y)
+//    println("resolved: $u $v")
 
     fun addWorkList(reg: Register) {
       if (reg is PhysicalRegister || reg.isMoveRelated || reg.degree >= K) return
@@ -269,20 +251,23 @@ private class AllocContext(val func: Function) {
 
       v is PhysicalRegister || graph.hasEdge(u, v) -> {
         constrainedMoves.add(mv)
+//        println("constrained: $u $v")
         addWorkList(u)
         addWorkList(v)
       }
 
       if (u is PhysicalRegister) {
         v.neighbors.all {
-          it is PhysicalRegister || it.degree < K || graph.hasEdge(it, v)
+          it is PhysicalRegister || it.degree < K || graph.hasEdge(it, u)
         }
       } else {
         val uNeighbors = u.neighbors.toSet()
-        uNeighbors.count { it.degree >= K } +
-          v.neighbors.count { it.degree >= K && !uNeighbors.contains(it) } < K
+        val conservative = uNeighbors.count { it.degree >= K } +
+          v.neighbors.count { it.degree >= K && it !in uNeighbors } < K
+        conservative
       } -> {
         coalescedMoves.add(mv)
+//        println("combining: $u $v")
         combine(u, v)
         addWorkList(u)
       }
@@ -339,10 +324,15 @@ private class AllocContext(val func: Function) {
 
   fun assignColors() {
     for (reg in selectStack.reversed()) {
+//      println("assigning color for $reg")
+//      println("select:")
+//      selectStack.forEach { println(it) }
       if (reg is PhysicalRegister) continue
       val okColors = allocatableRegs.toMutableSet()
       for (w in graph.neighbors(reg)) {
+//        println("consider $w")
         if (listOf(coloredNodes, precolored).any { it.contains(w.resolve) }) {
+//          println("${w.resolve} has color ${color[w.resolve]!!}")
           okColors.remove(color[w.resolve]!!)
         }
       }
@@ -381,7 +371,7 @@ private class AllocContext(val func: Function) {
   private val Register.isMoveRelated get() = moves.isNotEmpty()
   private val Register.neighbors
     get(): Sequence<Register> {
-      val select = selectStack.toSet()
+      val select = selectStack.filter { it !is PhysicalRegister }.toSet()
       return graph.neighbors(this).asSequence().filter {
         !select.contains(it) && !coalescedNodes.contains(it)
       }
