@@ -2,10 +2,7 @@ package org.altk.lab.mxc
 
 import org.altk.lab.mxc.ast.*
 import org.altk.lab.mxc.codegen.*
-import org.altk.lab.mxc.ir.IrGenerationContext
-import org.altk.lab.mxc.ir.Module
-import org.altk.lab.mxc.ir.PromoteAllocasToRegisters
-import org.altk.lab.mxc.ir.RemoveUnusedInstructions
+import org.altk.lab.mxc.ir.*
 import org.altk.lab.mxc.type.TypecheckRecord
 import org.altk.lab.mxc.ast.Transformer as AstTransformer
 import org.altk.lab.mxc.codegen.Transformer as CodegenTransformer
@@ -19,6 +16,8 @@ data class SourceOptions(
     DesugarConstructors(),
     DesugarMultiDimensionalNewExpressions(),
     DesugarClassFields(),
+    OldLocalizeGlobalVariables(),
+    MemoizePureFunctions(),
     MoveGlobalVarsToMain(),
   ),
 )
@@ -26,12 +25,14 @@ data class SourceOptions(
 data class IrOptions(
   val ssa: Boolean = true,
   val passes: List<IrTransformer> = listOf(
+    LocalizeGlobalVariables(),
     PromoteAllocasToRegisters(),
     RemoveUnusedInstructions(),
   ),
 ) {
   companion object {
     val noSsa = IrOptions(ssa = false, passes = listOf())
+    val raw = IrOptions(passes = listOf())
   }
 }
 
@@ -60,6 +61,7 @@ data class Options(
       source = SourceOptions(passes = listOf(InjectReturnZeroToMain())),
     )
     val irNoSsa = Options(ir = IrOptions.noSsa)
+    val irRaw = Options(ir = IrOptions.raw)
     val noOptimizations = Options(
       ir = IrOptions(passes = listOf()),
       codegen = CodegenOptions(passes = listOf(NaiveAllocateRegisters())),
@@ -70,6 +72,7 @@ data class Options(
   }
 }
 
+@Suppress("UNUSED_PARAMETER")
 fun parse(source: Source, options: Options = Options()) = parse1(source)
 
 fun sourceTree(source: Source, options: Options = Options()): Program {

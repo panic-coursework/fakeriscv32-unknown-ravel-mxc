@@ -226,7 +226,6 @@ class RemoveUnreachableDefinitionsInBlock : Transformer() {
       }
       defs.addAll(inst.defs)
       defs.removeAll(inst.uses)
-      // TODO: make a better approximation
       if (inst is CallLabel) defs.clear()
     }
     return BasicBlock(node.label, body.reversed(), node.successorNames)
@@ -255,7 +254,11 @@ class RemoveUnreachableDefinitions : Transformer() {
         .minus(gen[block]!!)
     }
     val reachingDefinitions = dfa(node, DfaDirection.FORWARD, gen, kill)
-    val unused = gen.values.flatten().toMutableSet()
+    val instructions = gen.values.flatten().toSet()
+    val replace = instructions
+      .associateWith<Instruction, Instruction?> { null }
+      .toMutableMap()
+    val users = instructions.associateWith { HashSet<Instruction>() }
     for (block in node.body) {
       val live = HashSet(reachingDefinitions.in_[block]!!)
       for (inst in block.body) {
@@ -267,7 +270,8 @@ class RemoveUnreachableDefinitions : Transformer() {
         for (reg in uses) {
           for (def in definitions[reg] ?: listOf()) {
             if (def in live) {
-              unused.remove(def)
+              replace.remove(def)
+              users[def]!!.add(inst)
             }
           }
         }
@@ -279,14 +283,57 @@ class RemoveUnreachableDefinitions : Transformer() {
     val returns = calleeSaveRegs + "ra".R + "a0".R
     for (def in reachingDefinitions.out[node.body.last()]!!) {
       if (def.def.any { it in returns }) {
-        unused.remove(def)
+        replace.remove(def)
+      }
+    }
+
+    // move elimination
+    val blockFromInst =
+      node.body.flatMap { block -> block.body.map { Pair(it, block) } }.toMap()
+    nextDef@ for ((def, use) in users) {
+      if (def is CallLabel) continue
+      if (use.size == 1) {
+        val user = use.first()
+        if (user is CallLabel) continue
+        if (user is Mv && blockFromInst[user] == blockFromInst[def]) {
+          var start = false
+          for (inst in blockFromInst[user]!!.body) {
+            if (inst == user) {
+              if (start) break
+              continue@nextDef
+            }
+            if (start && inst is CallLabel) continue@nextDef
+            if (start && listOf(user.src, user.dest).any { it in inst.defs || it in inst.uses }) {
+              continue@nextDef
+            }
+            if (inst == def) start = true
+          }
+          replace[def] = def.replaceDefs(def.defs.first(), user.dest)
+          replace[user] = null
+        } else if (def is Mv && blockFromInst[user] == blockFromInst[def]) {
+          var start = false
+          for (inst in blockFromInst[user]!!.body) {
+            if (inst == user) {
+              if (start) break
+              continue@nextDef
+            }
+            if (start && inst is CallLabel) continue@nextDef
+            if (start && def.src in inst.defs) {
+              continue@nextDef
+            }
+            if (inst == def) start = true
+          }
+          replace[user] = user.replaceDefs(def.defs.first(), def.src)
+          replace[def] = null
+        }
       }
     }
 
     val body = node.body.map { block ->
       BasicBlock(
         block.label,
-        block.body.filter { it is CallLabel || it !in unused },
+        block.body
+          .mapNotNull { it as? CallLabel ?: replace.getOrDefault(it, it) },
         block.successorNames,
       )
     }

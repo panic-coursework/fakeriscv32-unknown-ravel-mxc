@@ -19,6 +19,8 @@ private fun run(f: () -> Unit) {
   }
 }
 
+private fun print(f: () -> String) = run { println(f()) }
+
 fun ojMain() {
   run {
     val source = Source("stdin", System.`in`.readAllBytes().decodeToString())
@@ -46,13 +48,13 @@ fun main(args: Array<String>) {
   val source = Source(filename, sourceText)
 
   when (args[0]) {
-    "parse" -> run {
+    "parse" -> print {
       val program = parse(source)
       val rules = MxParser.ruleNames.toList()
-      println(program.tree.toStringTree(rules))
+      program.tree.toStringTree(rules)
     }
 
-    "ast" -> run { println(sourceTree(source)) }
+    "ast" -> print { sourceTree(source).toString() }
 
     "tyck" -> run {
       val rec = typecheck(source, Options.typecheckOnly)
@@ -64,15 +66,15 @@ fun main(args: Array<String>) {
       println(rec.ast.toString(rec))
     }
 
-    "ir" -> run { println(ir(source).text) }
-    "ir-no-ssa" -> run { println(ir(source, Options.irNoSsa).text) }
+    "ir"        -> print { ir(source).text }
+    "ir-raw"    -> print { ir(source, Options.irRaw).text }
+    "ir-no-ssa" -> print { ir(source, Options.irNoSsa).text }
 
-    "codegen" -> run { println(codegen(source).text) }
-    "codegen-no-ssa" -> run { println(codegen(source, Options.irNoSsa).text) }
-    "codegen-no-opt" ->
-      run { println(codegen(source, Options.noOptimizations).text) }
+    "codegen"        -> print { codegen(source).text }
+    "codegen-no-ssa" -> print { codegen(source, Options.irNoSsa).text }
+    "codegen-no-opt" -> print { codegen(source, Options.noOptimizations).text }
     "codegen-no-asm-opt" ->
-      run { println(codegen(source, Options.noAsmOptimizations).text) }
+      print { codegen(source, Options.noAsmOptimizations).text }
 
     "testrig" -> {
       val input = CharStreams.fromString(sourceText)

@@ -1,6 +1,7 @@
 package org.altk.lab.mxc.ast
 
 import org.altk.lab.mxc.type.ClassEnvironmentRecord
+import org.altk.lab.mxc.type.Mutability
 import org.altk.lab.mxc.type.TypecheckRecord
 
 abstract class Transformer {
@@ -481,14 +482,14 @@ class DesugarConstructors : Transformer() {
 }
 
 class DesugarClassFields : Transformer() {
-  private var tyck: TypecheckRecord? = null
+  private lateinit var tyck: TypecheckRecord
   override fun transform(node: Program): Program {
     tyck = TypecheckRecord(node)
     return super.transform(node)
   }
 
   override fun transform(node: LeftHandSideExpression): LeftHandSideExpression =
-    if (node is Identifier && tyck!!.references[node]!!.env is ClassEnvironmentRecord) {
+    if (node is Identifier && tyck.references[node]!!.env is ClassEnvironmentRecord) {
       MemberExpression(
         BuiltinSourceContext,
         ThisLiteral(BuiltinSourceContext),
@@ -499,8 +500,206 @@ class DesugarClassFields : Transformer() {
     }
 }
 
+class OldLocalizeGlobalVariables : Transformer() {
+  private lateinit var tyck: TypecheckRecord
+  private val usages = HashMap<String, HashSet<FunctionDeclaration>>()
+  private val reverseUsages =
+    HashMap<FunctionDeclaration, MutableList<String>>()
+  private val mutated = HashSet<String>()
+  private val hasCalls = HashSet<FunctionDeclaration>()
+
+  private inner class CollectUsages : Transformer() {
+    private var currentFunction: FunctionDeclaration? = null
+    private var loop = 0
+    override fun transform(node: FunctionDeclaration): FunctionDeclaration {
+      currentFunction = node
+      reverseUsages[node] = mutableListOf()
+      try {
+        return super.transform(node)
+      } finally {
+        currentFunction = null
+      }
+    }
+
+    override fun transform(node: ForStatement): ForStatement {
+      try {
+        ++loop
+        return super.transform(node)
+      } finally {
+        --loop
+      }
+    }
+
+    override fun transform(node: Identifier): Identifier {
+      val func = currentFunction
+      val ref = tyck.references[node]
+      if (func != null && ref?.isGlobal == true) {
+        if (loop > 0) {
+          (0..9).forEach { _ -> usages[node.name]?.add(func) }
+        }
+        usages[node.name]?.add(func)
+        if (ref.binding.mutability == Mutability.MUTABLE) {
+          reverseUsages[func]!!.add(node.name)
+        }
+      }
+      return node
+    }
+
+    override fun transform(node: AssignmentExpression): AssignmentExpression {
+      if (node.left is Identifier && tyck.references[node.left]!!.isGlobal) {
+        mutated.add(node.left.name)
+      }
+      return super.transform(node)
+    }
+
+    override fun transform(node: CallExpression): CallExpression {
+      if (currentFunction != null) hasCalls.add(currentFunction!!)
+      return super.transform(node)
+    }
+  }
+
+  private val preamble =
+    HashMap<FunctionDeclaration, MutableList<VariableDeclaration>>()
+  private val localizedVars =
+    HashMap<FunctionDeclaration, MutableList<VariableDeclaration>>()
+
+  override fun transform(node: Program): Program {
+    tyck = TypecheckRecord(node)
+    val reverse = node.body
+      .filterIsInstance<VariableDeclaration>()
+      .flatMap { d -> d.declarations.map { Triple(it.id.name, d, it) } }
+      .associateBy { it.first }
+      .mapValues { (_, v) -> Pair(v.second, v.third) }
+    for (name in reverse.keys) {
+      usages[name] = HashSet()
+    }
+    CollectUsages().transform(node)
+
+    val removedDeclarators = HashSet<VariableDeclarator>()
+    val removedGlobals = HashSet<String>()
+    for ((name, fs) in usages) {
+      if (fs.size != 1) continue
+      val func = fs.first()
+      if (func.params.isNotEmpty()) continue
+      val (declaration, declarator) = reverse[name]!!
+      if (declarator.init != null) {
+        if (name in mutated) continue
+        val init = declarator.init
+        if (
+          init !is NewExpression ||
+          init.typeId !is NewArrayType ||
+          init.typeId.typeId is NewArrayType ||
+          init.typeId.length !is IntegerLiteral
+        ) continue
+      }
+//      System.err.println("moving $name into ${func.id.name}")
+      val stmts = preamble.getOrPut(func) { mutableListOf() }
+      stmts.add(
+        VariableDeclaration(
+          declaration.ctx,
+          declaration.typeId,
+          listOf(declarator),
+        )
+      )
+      removedDeclarators.add(declarator)
+      removedGlobals.add(name)
+    }
+
+    for ((func, usedGlobals) in reverseUsages) {
+      if (!removedGlobals.containsAll(usedGlobals)) {
+        if (func !in hasCalls) for (v in usedGlobals.toSet()) {
+          val count = usedGlobals.count { it == v }
+//          System.err.println("$v $count")
+          // replaced by IR transform
+          if (count > 1048576) {
+            val (declaration, _) = reverse[v]!!
+            val newId = "global.$v"
+            localizedVars.getOrPut(func) { mutableListOf() }.add(
+              VariableDeclaration(
+                declaration.ctx,
+                declaration.typeId,
+                listOf(
+                  VariableDeclarator(
+                    BuiltinSourceContext,
+                    Identifier(BuiltinSourceContext, newId),
+                    Identifier(BuiltinSourceContext, v),
+                  ),
+                ),
+              ),
+            )
+          }
+        }
+
+        val decls = preamble[func]?.map { it.declarations.first() } ?: continue
+        removedDeclarators.removeAll(decls.toSet())
+        preamble.remove(func)
+      }
+    }
+
+    val prog = Program(node.ctx, node.body.mapNotNull { item ->
+      if (item is VariableDeclaration) {
+        val decls = item.declarations.filter { it !in removedDeclarators }
+        if (decls.isEmpty()) {
+          null
+        } else {
+          VariableDeclaration(item.ctx, item.typeId, decls)
+        }
+      } else {
+        item
+      }
+    })
+
+    return super.transform(prog)
+  }
+
+  private val localizedIds = HashSet<String>()
+  private lateinit var saves: List<ExpressionStatement>
+  override fun transform(node: FunctionDeclaration): FunctionDeclaration {
+    val globals = preamble[node]
+    if (globals == null) {
+      val loads = localizedVars[node] ?: return node
+      saves = loads.map { v ->
+        val name = (v.declarations.first().init as Identifier).name
+        localizedIds.add(name)
+        ExpressionStatement(
+          BuiltinSourceContext,
+          AssignmentExpression(
+            BuiltinSourceContext,
+            Identifier(BuiltinSourceContext, name),
+            Identifier(BuiltinSourceContext, "global.$name"),
+          ),
+        )
+      }
+      try {
+        return FunctionDeclaration(
+          node.ctx, node.id, node.params, node.returnType,
+          BlockStatement(node.body.ctx, loads + transform(node.body) + saves),
+        )
+      } finally {
+        localizedIds.clear()
+      }
+    }
+    return FunctionDeclaration(
+      node.ctx, node.id, node.params, node.returnType,
+      BlockStatement(node.body.ctx, globals + node.body),
+    )
+  }
+
+  override fun transform(node: Identifier): Identifier {
+    val ref = tyck.references[node] ?: return node
+    if (!ref.isGlobal || node.name !in localizedIds) return node
+    return Identifier(node.ctx, "global.${node.name}")
+  }
+
+  override fun transform(node: Statement) = if (node is ReturnStatement) {
+    BlockStatement(node.ctx, saves + transform(node))
+  } else {
+    super.transform(node)
+  }
+}
+
 class MemoizePureFunctions : Transformer() {
-  private var tyck: TypecheckRecord? = null
+  private lateinit var tyck: TypecheckRecord
   override fun transform(node: Program): Program {
     tyck = TypecheckRecord(node)
     super.transform(node)
@@ -586,7 +785,7 @@ class MemoizePureFunctions : Transformer() {
   }
 
   override fun transform(node: Identifier): Identifier {
-    if (tyck!!.references[node]?.isGlobal == true) {
+    if (tyck.references[node]?.isGlobal == true) {
       pure = false
     }
     return node

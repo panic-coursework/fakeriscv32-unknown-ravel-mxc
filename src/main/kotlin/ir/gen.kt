@@ -13,6 +13,8 @@ import org.altk.lab.mxc.ast.NullLiteral as AstNullLiteral
 import org.altk.lab.mxc.ast.StringLiteral as AstStringLiteral
 import org.altk.lab.mxc.type.Type as AstType
 
+private const val LOOP_WEIGHT = 10
+
 class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
   TypecheckRecord(ast) {
   private val AstType.ir: Type get() = ir(this)
@@ -34,7 +36,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
   val valueFromReference = HashMap<ReferenceRecord, Value<*>>()
   val typeFromStruct = HashMap<String, MxStructType>()
 
-  private class FunctionContext(val ir: IrGenerationContext, val ssa: Boolean) {
+  private inner class FunctionContext {
     val nextIndex = HashMap<String, Int>()
     val blocks = mutableListOf<BasicBlockContext>()
     fun nextId(name: String): LocalNamedIdentifier {
@@ -43,14 +45,15 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
       return LocalNamedIdentifier(if (ix > 0) "$name.$ix" else name)
     }
 
-    fun createBasicBlock(name: String): BasicBlockContext {
-      val ctx = BasicBlockContext(this, Label(nextId(name)), ssa)
+    fun createBasicBlock(name: String, freq: Int): BasicBlockContext {
+      val ctx = BasicBlockContext(this, Label(nextId(name)), ssa, freq)
       blocks.add(ctx)
       return ctx
     }
 
-    fun createBasicBlockWithName(name: String): BasicBlockContext {
-      val ctx = BasicBlockContext(this, Label(LocalNamedIdentifier(name)), ssa)
+    fun createBasicBlockWithName(name: String, freq: Int): BasicBlockContext {
+      val ctx =
+        BasicBlockContext(this, Label(LocalNamedIdentifier(name)), ssa, freq)
       blocks.add(ctx)
       return ctx
     }
@@ -77,14 +80,14 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
     }
   }
 
-  private class BasicBlockContext(
+  private inner class BasicBlockContext(
     val func: FunctionContext,
     val label: Label,
     val ssa: Boolean,
+    val freq: Int,
   ) {
     val body = mutableListOf<Instruction>()
-    val ir get() = func.ir
-    private val AstType.ir: Type get() = this@BasicBlockContext.ir.ir(this)
+    private val AstType.ir: Type get() = this@IrGenerationContext.ir(this)
 
     fun registerEnv(env: EnvironmentRecord) {
       env.bindings.values
@@ -94,11 +97,11 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
     }
 
     private fun registerReference(ref: ReferenceRecord) {
-      if (!ir.valueFromReference.containsKey(ref)) {
+      if (!valueFromReference.containsKey(ref)) {
         val id = func.nextId(ref.binding.name)
         val ty = ref.binding.type.ir
         val value = valueOf(id, if (ssa) PointerType(ty) else ty)
-        ir.valueFromReference[ref] = value
+        valueFromReference[ref] = value
         if (ssa) {
           body.add(Alloca(id, ty))
         } else {
@@ -107,7 +110,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
       }
     }
 
-    fun emit() = BasicBlock(label, body.toList())
+    fun emit() = BasicBlock(label, body.toList(), freq)
   }
 
   private class LoopContext(
@@ -185,7 +188,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
         val id = GlobalNamedIdentifier(binding.name)
         valueFromReference[ReferenceRecord(globalEnv, binding)] =
           valueOf(id, PointerType(ty))
-        GlobalVariableDeclaration(id, Value(NullLiteral, PointerType(ty)))
+        GlobalVariableDeclaration(id, Value(NullLiteral, ty))
       }
     val funcs = functions.map { ir(it) }
     val methods = classes.flatMap { class_ ->
@@ -201,7 +204,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
   ): FunctionDefinition {
     val ty =
       func.env.outerEnv!!.getBinding(null, func.id.name).type as MxFunction
-    val ctx = FunctionContext(this, ssa)
+    val ctx = FunctionContext()
     val thisArg = class_?.let {
       valueOf(
         LocalNamedIdentifier("this"),
@@ -212,7 +215,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
     val params = ty.params
       .zip(func.params)
       .map { (type, param) -> valueOf(ctx.nextId(param.id.name), type.ir) }
-    val block = ctx.createBasicBlockWithName("entry")
+    val block = ctx.createBasicBlockWithName("entry", 1)
     if (ssa) {
       block.registerEnv(func.env)
       block.body += func.params.mapIndexed { i, param ->
@@ -254,12 +257,12 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
 
     is BreakStatement -> {
       entry.body.add(BranchUnconditional(loop!!.breakTarget.label))
-      entry.func.createBasicBlock("break.after")
+      entry.func.createBasicBlock("break.after", entry.freq)
     }
 
     is ContinueStatement -> {
       entry.body.add(BranchUnconditional(loop!!.continueTarget.label))
-      entry.func.createBasicBlock("continue.after")
+      entry.func.createBasicBlock("continue.after", entry.freq)
     }
 
     is EmptyStatement -> entry
@@ -268,14 +271,16 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
     is IfStatement -> {
       val test = ir(entry, node.test)
       val testRes = test.result!!.asType<BoolType>()
-      val consequentBlock = entry.func.createBasicBlock("if.consequent")
-      val exitBlock = entry.func.createBasicBlock("if.exit")
+      val consequentBlock =
+        entry.func.createBasicBlock("if.consequent", entry.freq)
+      val exitBlock = entry.func.createBasicBlock("if.exit", entry.freq)
       consequentBlock.registerEnv(node.consequent.env)
       val consequentExit = ir(consequentBlock, node.consequent, loop)
       consequentExit.body.add(BranchUnconditional(exitBlock.label))
 
       if (node.alternate != null) {
-        val alternateBlock = entry.func.createBasicBlock("if.alternate")
+        val alternateBlock =
+          entry.func.createBasicBlock("if.alternate", entry.freq)
         alternateBlock.registerEnv(node.alternate.env)
         val br = BranchConditional(
           testRes,
@@ -302,14 +307,15 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
         is VariableDeclaration -> ir(entry, node.init, loop)
         is Expression -> ir(entry, node.init).exit
       }
-      val testBlock = entry.func.createBasicBlock("for.test")
+      val freq = entry.freq * LOOP_WEIGHT
+      val testBlock = entry.func.createBasicBlock("for.test", freq)
       initExit.body.add(BranchUnconditional(testBlock.label))
-      val bodyBlock = entry.func.createBasicBlock("for.body")
-      val updateBlock = entry.func.createBasicBlock("for.update")
+      val bodyBlock = entry.func.createBasicBlock("for.body", freq)
+      val updateBlock = entry.func.createBasicBlock("for.update", freq)
       val updateExit =
         node.update?.let { ir(updateBlock, it).exit } ?: updateBlock
       updateExit.body.add(BranchUnconditional(testBlock.label))
-      val exitBlock = entry.func.createBasicBlock("for.exit")
+      val exitBlock = entry.func.createBasicBlock("for.exit", entry.freq)
 
       if (node.test == null) {
         testBlock.body.add(BranchUnconditional(bodyBlock.label))
@@ -332,10 +338,11 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
     }
 
     is WhileStatement -> {
-      val testBlock = entry.func.createBasicBlock("while.test")
+      val freq = entry.freq * LOOP_WEIGHT
+      val testBlock = entry.func.createBasicBlock("while.test", freq)
       entry.body.add(BranchUnconditional(testBlock.label))
-      val bodyBlock = entry.func.createBasicBlock("while.body")
-      val exitBlock = entry.func.createBasicBlock("while.exit")
+      val bodyBlock = entry.func.createBasicBlock("while.body", freq)
+      val exitBlock = entry.func.createBasicBlock("while.exit", entry.freq)
       bodyBlock.registerEnv(node.body.env)
 
       val test = ir(testBlock, node.test)
@@ -358,7 +365,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
         val res = ir(entry, node.argument)
         res.exit.body.add(ReturnValue(res.result!!))
       }
-      entry.func.createBasicBlock("return.after")
+      entry.func.createBasicBlock("return.after", entry.freq)
     }
 
     is VariableDeclaration ->
@@ -419,8 +426,10 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
           val default = node.operator == BinaryOperator.OR
           val opname = node.operator.toString()
           val left = ir(entry, node.left)
-          val nextBlock = entry.func.createBasicBlock("$opname.next")
-          val exitBlock = entry.func.createBasicBlock("$opname.exit")
+          val nextBlock =
+            entry.func.createBasicBlock("$opname.next", entry.freq)
+          val exitBlock =
+            entry.func.createBasicBlock("$opname.exit", entry.freq)
           val br = BranchConditional(
             left.result!!.asType(),
             if (default) exitBlock.label else nextBlock.label,
@@ -697,28 +706,15 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
           if (node.typeId.typeId is NewArrayType) {
             throw MxcInternalError(null, "Transform needed for multidim new[]")
           }
-          val size0 = Int32BinaryOperation(
-            entry.func.nextId("new.size.mul"),
-            Int32BinaryOperation.Op.MUL,
-            length.result!!.asType(),
-            Value(IntegerLiteral(4), Int32Type),
-          )
-          val size = Int32BinaryOperation(
-            entry.func.nextId("new.size.add"),
-            Int32BinaryOperation.Op.ADD,
-            size0.value.asType(),
-            Value(IntegerLiteral(4), Int32Type),
-          )
           val malloc = Call(
             entry.func.nextId("new.array"),
             Value(
-              GlobalNamedIdentifier("malloc"),
+              GlobalNamedIdentifier("array.new"),
               FunctionType(listOf(Int32Type), PointerType(ty)),
             ),
-            listOf(size.value),
+            listOf(length.result!!),
           )
-          val store = Store(malloc.value.operand, length.result)
-          length.exit.body += listOf(size0, size, malloc, store)
+          length.exit.body += malloc
           ExpressionResult(length.exit, malloc.value)
         }
 
@@ -762,7 +758,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
     node: LeftHandSideExpression,
   ): ExpressionResult = when (node) {
     is ComputedMemberExpression -> {
-      // Array = { i32, [ 0 x ptr ] }
+      // Array = [ 0 x ptr ]
       val obj = ir(entry, node.`object`)
       val ix = ir(obj.exit, node.prop)
       val id = entry.func.nextId("computed")
@@ -771,7 +767,6 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
         obj.result!!.asType(),
         listOf(
           GepIndexLiteral(0),
-          GepIndexLiteral(1),
           GepIndexValue(ix.result!!.asType()),
         ),
       )

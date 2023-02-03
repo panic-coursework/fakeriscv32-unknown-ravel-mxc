@@ -9,4 +9,4 @@ val callerSaveRegs =
 
 val calleeSaveRegs = (0..11).map { "s$it".R }
 
-val allocatableRegs = (0..6).map { "t$it".R } + (0..7).map { "a$it".R } + (0..11).map { "s$it".R }
+val allocatableRegs = (0..6).map { "t$it".R } + (0..7).map { "a$it".R } + (0..11).map { "s$it".R } + "ra".R

@@ -49,9 +49,8 @@ val prelude = listOf(
     BoolType,
   ),
 
-  // libc functions
   FunctionDeclaration(
-    GlobalNamedIdentifier("malloc"),
+    GlobalNamedIdentifier("array.new"),
     listOf(Int32Type),
     PointerType(null),
   ),

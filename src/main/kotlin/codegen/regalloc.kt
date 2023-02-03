@@ -197,7 +197,7 @@ private class AllocContext(val func: Function) {
       }
     }
     for (reg in registers) {
-      weight[reg] = refCount.getOrDefault(reg, 0) +
+      weight[reg] = -refCount.getOrDefault(reg, 0) +
         (if (reg.name.startsWith("spill")) -2 else 0) +
         (if (reg.name.startsWith("save")) 2048 else 0) +
         (lifetimeEnd.getOrDefault(reg, 0) - lifetimeStart.getOrDefault(reg, 0))
@@ -341,7 +341,12 @@ private class AllocContext(val func: Function) {
         spilledNodes.add(reg)
       } else {
         coloredNodes.add(reg)
-        color[reg] = okColors.first()
+        val moves = moveList[reg]
+          ?.map { if (it.src == reg) it.dest else it.src }
+          ?.filterIsInstance<PhysicalRegister>()
+          ?.toSet()
+          ?: setOf()
+        color[reg] = moves.find { it in okColors } ?: okColors.first()
       }
     }
     for (reg in coalescedNodes) {

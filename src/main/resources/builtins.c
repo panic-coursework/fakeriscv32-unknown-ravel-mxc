@@ -79,7 +79,13 @@ int string_ord (MxString *str, int ix) {
 
 
 int array_size (MxArray *array) {
-  return array->length;
+  return ((MxArray *) ((char *) array - sizeof(int)))->length;
+}
+
+MxArray *array_new (int length) {
+  char *ptr = (char *) malloc(length * 4 + sizeof(int));
+  *(int *) ptr = length;
+  return (MxArray *) (ptr + sizeof(int));
 }
 
 

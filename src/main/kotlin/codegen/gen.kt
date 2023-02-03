@@ -268,26 +268,24 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
   private fun asm(ir: GetElementPtr): List<Instruction> {
     val address = ir.result.R
     val offset = VirtualRegister("gep.offset", "t0".R)
+    if (ir.indices.size != 2) error("unreachable")
     return listOf(
       loadVirtual(ir.target, address),
-    ) + when (ir.indices.size) {
-      2 -> listOf(
+    ) + when (val index = ir.indices[1]) {
+      is GepIndexLiteral -> listOf(
         IntI(
           IntI.Type.ADDI,
           address,
-          ((ir.indices[1] as GepIndexLiteral).index * wordSize).L,
+          (index.index * wordSize).L,
           address,
         ),
       )
 
-      3 -> listOf(
-        loadVirtual((ir.indices[2] as GepIndexValue).index, offset),
-        IntI(IntI.Type.ADDI, offset, 1.L, offset),
+      is GepIndexValue -> listOf(
+        loadVirtual(index.index, offset),
         IntI(IntI.Type.SLLI, offset, 2.L, offset),
         IntR(IntR.Type.ADD, address, offset, address),
       )
-
-      else -> error("unreachable")
     }
   }
 

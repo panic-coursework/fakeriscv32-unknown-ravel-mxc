@@ -56,7 +56,10 @@ sealed class NamedIdentifier(override val name: String) : Identifier {
   override fun toString() = "NamedIdentifier($name)"
   override fun hashCode() = name.hashCode()
   override fun equals(other: Any?) =
-    other is NamedIdentifier && name == other.name
+    other is NamedIdentifier &&
+      this is LocalIdentifier == other is LocalIdentifier &&
+      this is GlobalIdentifier == other is GlobalIdentifier &&
+      name == other.name
 }
 
 sealed class UnnamedIdentifier(val id: Int) : Identifier {
@@ -64,7 +67,10 @@ sealed class UnnamedIdentifier(val id: Int) : Identifier {
   override val escapedName get() = name
   override fun hashCode() = id
   override fun equals(other: Any?) =
-    other is UnnamedIdentifier && id == other.id
+    other is UnnamedIdentifier &&
+      this is LocalIdentifier == other is LocalIdentifier &&
+      this is GlobalIdentifier == other is GlobalIdentifier &&
+      id == other.id
 }
 
 class GlobalNamedIdentifier(name: String) :
@@ -148,8 +154,7 @@ class FunctionType(val args: List<Type>, val returnType: Type) : Type {
     get() = "${returnType.text} (${args.joinToString(", ") { it.text }})"
 }
 
-open class MxArrayType(val content: Type) :
-  PointerType(AggregateType(listOf(Int32Type, ArrayType(content, 0))))
+open class MxArrayType(val content: Type) : PointerType(ArrayType(content, 0))
 
 object MxStringType : MxArrayType(CharType)
 
@@ -219,6 +224,7 @@ class FunctionDeclaration(
 class BasicBlock(
   val label: Label,
   val body: List<Instruction>,
+  val estimatedFrequency: Int,
 ) : Node {
   override val text get() = "${(label.operand as Identifier).escapedName}:\n${bodyText}"
   private val bodyText get() = indent(body.joinToString("\n") { it.text })
@@ -305,7 +311,7 @@ sealed class BinaryOperation(
 ) : Operation(result, resultType) {
   override val text
     get() = "${result.text} = $op ${operandType.text} ${lhs.operand.text}, ${rhs.operand.text}"
-  @Suppress("LeakingThis")
+
   override val uses get() = lhs.u + rhs.u
 }
 
@@ -390,11 +396,16 @@ class Phi(result: LocalIdentifier, val cases: List<Case>) :
 }
 
 
+sealed interface GenericCall : Instruction {
+  val function: Value<FunctionType>
+  val args: List<Value<*>>
+}
+
 class Call(
   result: LocalIdentifier,
-  val function: Value<FunctionType>,
-  val args: List<Value<*>>
-) : Operation(result, function.type.returnType) {
+  override val function: Value<FunctionType>,
+  override val args: List<Value<*>>
+) : Operation(result, function.type.returnType), GenericCall {
   private val argsText get() = args.joinToString(", ") { it.text }
   override val text: String
     get() = "${result.text} = tail call ${type.text} ${function.operand.text}(${argsText})"
@@ -416,8 +427,10 @@ class Call(
     Call(result.rI(x, y), function.r(x, y), args.map { it.r(x, y) })
 }
 
-class CallVoid(val function: Value<FunctionType>, val args: List<Value<*>>) :
-  Instruction {
+class CallVoid(
+  override val function: Value<FunctionType>,
+  override val args: List<Value<*>>,
+) : Instruction, GenericCall {
   private val argsText get() = args.joinToString(", ") { it.text }
   override val text: String
     get() = "call void ${function.operand.text}(${argsText})"
@@ -535,6 +548,7 @@ class GetElementPtr(
   override val uses
     get() = target.u +
       indices.filterIsInstance<GepIndexValue>().flatMap { it.index.u }
+
   override fun replace(x: LocalIdentifier, y: Operand) =
     GetElementPtr(result.rI(x, y), target.r(x, y), indices.map {
       when (it) {

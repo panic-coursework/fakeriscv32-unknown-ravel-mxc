@@ -2,6 +2,28 @@ package org.altk.lab.mxc.ir
 
 import org.altk.lab.mxc.MxcInternalError
 
+data class ControlFlow(
+  val blocks: Map<String, BasicBlock>,
+  val successors: Map<BasicBlock, List<BasicBlock>>,
+  val predecessors: Map<BasicBlock, List<BasicBlock>>,
+) {
+  companion object {
+    fun from(func: FunctionDefinition): ControlFlow {
+      val blocks = func.body.associateBy { (it.label.operand as Identifier).name }
+      val successors = func.body.associateWith { block ->
+        block.successors.map { label ->
+          blocks[(label.operand as Identifier).name]!!
+        }
+      }
+      val predecessors = successors
+        .flatMap { (k, v) -> v.map { Pair(it, k) } }
+        .groupBy { it.first }
+        .mapValues { (_, v) -> v.map { it.second } }
+      return ControlFlow(blocks, successors, predecessors)
+    }
+  }
+}
+
 class DominatorTree(val func: FunctionDefinition) {
   private val dfNum = HashMap<BasicBlock, Int>()
   private val vertex = HashMap<Int, BasicBlock>()
@@ -14,16 +36,7 @@ class DominatorTree(val func: FunctionDefinition) {
   private val best = HashMap<BasicBlock, BasicBlock>()
   private var N = 0
 
-  val blocks = func.body.associateBy { (it.label.operand as Identifier).name }
-  val successors = func.body.associateWith { block ->
-    block.successors.map { label ->
-      blocks[(label.operand as Identifier).name]!!
-    }
-  }
-  val predecessors = successors
-    .flatMap { (k, v) -> v.map { Pair(it, k) } }
-    .groupBy { it.first }
-    .mapValues { (_, v) -> v.map { it.second } }
+  val cfg = ControlFlow.from(func)
 
   private fun dfs(p: BasicBlock?, n: BasicBlock) {
     if (dfNum[n] == null) {
@@ -31,7 +44,7 @@ class DominatorTree(val func: FunctionDefinition) {
       vertex[N] = n
       parent[n] = p
       N++
-      for (w in successors[n]!!) {
+      for (w in cfg.successors[n]!!) {
         dfs(n, w)
       }
     }
@@ -44,7 +57,7 @@ class DominatorTree(val func: FunctionDefinition) {
       val n = vertex[i]!!
       val p = parent[n]!!
       var s = p
-      for (v in predecessors[n] ?: listOf()) {
+      for (v in cfg.predecessors[n] ?: listOf()) {
         val sp = if (dfNum[v]!! <= dfNum[n]!!) {
           v
         } else {
@@ -100,6 +113,7 @@ class PromoteAllocasToRegistersContext(val func: FunctionDefinition) {
   private val allocas = func.body.flatMap { it.body.filterIsInstance<Alloca>() }
   private val vars = allocas.map { it.result }
   private val varType = allocas.associate { Pair(it.result, it.content) }
+  @Suppress("Unused")
   private val BasicBlock.uses
     get() = body
       .filterIsInstance<Load>()
@@ -130,7 +144,9 @@ class PromoteAllocasToRegistersContext(val func: FunctionDefinition) {
 
   private val df = HashMap<BasicBlock, Set<BasicBlock>>()
   private fun computeDf(n: BasicBlock) {
-    val s = tree.successors[n]!!.filter { tree.idom[it] != n }.toMutableSet()
+    val s = tree.cfg.successors[n]!!
+      .filter { tree.idom[it] != n }
+      .toMutableSet()
     for (c in children[n] ?: setOf()) {
       computeDf(c)
       for (w in df[c]!!) {
@@ -173,7 +189,7 @@ class PromoteAllocasToRegistersContext(val func: FunctionDefinition) {
   private val phiMapping = HashMap<BasicBlock, Map<LocalIdentifier, IntArray>>()
   private fun initPhiMappings() {
     for ((block, phiVars) in phis) {
-      val size = tree.predecessors[block]?.size ?: 0
+      val size = tree.cfg.predecessors[block]?.size ?: 0
       phiMapping[block] = phiVars.associateWith { IntArray(size) }
     }
   }
@@ -219,8 +235,8 @@ class PromoteAllocasToRegistersContext(val func: FunctionDefinition) {
         null
       } else s
     }
-    for (y in tree.successors[n]!!) {
-      val j = tree.predecessors[y]!!.indexOf(n)
+    for (y in tree.cfg.successors[n]!!) {
+      val j = tree.cfg.predecessors[y]!!.indexOf(n)
       for ((a, phi) in phiMapping[y]!!) {
         phi[j] = stack[a]!!.last()
       }
@@ -247,7 +263,7 @@ class PromoteAllocasToRegistersContext(val func: FunctionDefinition) {
   private val phiInstructions = HashMap<BasicBlock, List<Phi>>()
   private fun generatePhiInstructions() {
     func.body.forEach { block ->
-      val predecessors = tree.predecessors[block] ?: listOf()
+      val predecessors = tree.cfg.predecessors[block] ?: listOf()
       val indexMap = phiIndex[block]!!
 //      println(block.label.text)
 //      println(phiMapping[block]!!.keys)
@@ -277,7 +293,7 @@ class PromoteAllocasToRegistersContext(val func: FunctionDefinition) {
     val body = (phiInstructions[block]!! + renamed).map { inst ->
       replaces.entries.fold(inst) { i, (x, y) -> i.replace(x, resolve(y)) }
     }
-    BasicBlock(block.label, body)
+    BasicBlock(block.label, body, block.estimatedFrequency)
   }
 
   fun emit(): FunctionDefinition {
