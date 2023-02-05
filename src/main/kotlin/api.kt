@@ -28,6 +28,7 @@ data class IrOptions(
     LocalizeGlobalVariables(),
     PromoteAllocasToRegisters(),
     RemoveUnusedInstructions(),
+    LoopInvariantHoisting(),
   ),
 ) {
   companion object {

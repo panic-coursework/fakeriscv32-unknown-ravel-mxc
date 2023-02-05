@@ -15,7 +15,9 @@ private fun run(f: () -> Unit) {
     f()
   } catch (e: MxcError) {
     e.print()
-    exitProcess(1)
+    if (e !is NotImplemented && e !is MxcInternalError) {
+      exitProcess(1)
+    }
   }
 }
 

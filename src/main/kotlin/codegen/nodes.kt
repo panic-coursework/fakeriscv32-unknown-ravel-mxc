@@ -1,3 +1,5 @@
+@file:Suppress("MemberVisibilityCanBePrivate")
+
 package org.altk.lab.mxc.codegen
 
 import org.altk.lab.mxc.MxcInternalError
@@ -119,6 +121,7 @@ class ImmediateLiteral(val value: Int) : Immediate {
 
 val Int.L get() = ImmediateLiteral(this)
 
+@Suppress("Unused")
 class ImmediateOp(val op: Op, val label: Label) : Immediate {
   enum class Op { HI, LO, PCREL_HI, PCREL_LO }
 
@@ -151,8 +154,9 @@ class VirtualRegister(
   override val text
     get() = "[vreg@${hashCode().toString(16).padStart(8, '0')} ($name)]"
 
-  override fun equals(other: Any?) = this === other
+  @Suppress("RedundantOverride")
   override fun hashCode() = super.hashCode()
+  override fun equals(other: Any?) = this === other
   override fun toString() = text
 }
 
@@ -260,10 +264,12 @@ sealed class UTypeInstruction(
 
 class Branch(val type: Type, rs1: Register, rs2: Register, dest: Immediate) :
   BTypeInstruction(type.toString().lowercase(), rs1, rs2, dest) {
+  @Suppress("Unused")
   enum class Type { BEQ, BNE, BLT, BLTU, BGE, BGEU }
 
   override fun replace(x: Register, y: Register) =
     Branch(type, rs1.r(x, y), rs2.r(x, y), imm)
+
   override fun replaceUses(x: Register, y: Register) = replace(x, y)
   override fun replaceDefs(x: Register, y: Register) = this
 }
@@ -274,37 +280,45 @@ class Lui(imm: Immediate, rd: Register) : UTypeInstruction("lui", imm, rd) {
   override fun replaceDefs(x: Register, y: Register) = replace(x, y)
 }
 
+@Suppress("Unused")
 class Auipc(imm: Immediate, rd: Register) : UTypeInstruction("auipc", imm, rd) {
   override fun replace(x: Register, y: Register) = Auipc(imm, rd.r(x, y))
   override fun replaceUses(x: Register, y: Register) = this
   override fun replaceDefs(x: Register, y: Register) = replace(x, y)
 }
 
+@Suppress("Unused")
 class Jal(imm: Immediate, rd: Register) : UTypeInstruction("jal", imm, rd) {
   override fun replace(x: Register, y: Register) = Jal(imm, rd.r(x, y))
   override fun replaceUses(x: Register, y: Register) = this
   override fun replaceDefs(x: Register, y: Register) = replace(x, y)
 }
 
+@Suppress("Unused")
 class Jalr(val base: Register, imm: Immediate, rd: Register) :
   ITypeInstruction("jalr", base, imm, rd) {
   override val text get() = "$inst\t${rd.text}, ${imm.text}(${rd.text})"
   override fun replace(x: Register, y: Register) =
     Jalr(base.r(x, y), imm, rd.r(x, y))
+
   override fun replaceUses(x: Register, y: Register) =
     Jalr(base.r(x, y), imm, rd)
+
   override fun replaceDefs(x: Register, y: Register) =
     Jalr(base, imm, rd.r(x, y))
 }
 
 class Load(val width: Width, val base: Register, imm: Immediate, rd: Register) :
   LoadInstruction(width.name.lowercase(), base, imm, rd) {
+  @Suppress("Unused")
   enum class Width { LB, LH, LW, LBU, LHU }
 
   override fun replace(x: Register, y: Register) =
     Load(width, base.r(x, y), imm, rd.r(x, y))
+
   override fun replaceUses(x: Register, y: Register) =
     Load(width, base.r(x, y), imm, rd)
+
   override fun replaceDefs(x: Register, y: Register) =
     Load(width, base, imm, rd.r(x, y))
 }
@@ -314,12 +328,13 @@ class Store(
   val base: Register,
   imm: Immediate,
   val src: Register
-) :
-  STypeInstruction(width.name.lowercase(), base, src, imm) {
+) : STypeInstruction(width.name.lowercase(), base, src, imm) {
+  @Suppress("Unused")
   enum class Width { SB, SH, SW }
 
   override fun replace(x: Register, y: Register) =
     Store(width, base.r(x, y), imm, src.r(x, y))
+
   override fun replaceUses(x: Register, y: Register) = replace(x, y)
   override fun replaceDefs(x: Register, y: Register) = this
 }
@@ -335,8 +350,10 @@ open class IntI(
 
   override fun replace(x: Register, y: Register) =
     IntI(type, src.r(x, y), imm, dest.r(x, y))
+
   override fun replaceUses(x: Register, y: Register) =
     IntI(type, src.r(x, y), imm, dest)
+
   override fun replaceDefs(x: Register, y: Register) =
     IntI(type, src, imm, dest.r(x, y))
 }
@@ -358,8 +375,10 @@ class IntR(val type: Type, rs1: Register, rs2: Register, rd: Register) :
 
   override fun replace(x: Register, y: Register) =
     IntR(type, rs1.r(x, y), rs2.r(x, y), rd.r(x, y))
+
   override fun replaceUses(x: Register, y: Register) =
     IntR(type, rs1.r(x, y), rs2.r(x, y), rd)
+
   override fun replaceDefs(x: Register, y: Register) =
     IntR(type, rs1, rs2, rd.r(x, y))
 }
@@ -385,6 +404,7 @@ class La(val rd: Register, val imm: Label) : PsuedoInstruction {
   override fun replaceDefs(x: Register, y: Register) = replace(x, y)
 }
 
+@Suppress("Unused")
 class LoadGlobal(val width: Width, val imm: Label, val rd: Register) :
   PsuedoInstruction {
   enum class Width { LB, LH, LW }
@@ -394,10 +414,12 @@ class LoadGlobal(val width: Width, val imm: Label, val rd: Register) :
   override val uses get() = setOf<Register>()
   override fun replace(x: Register, y: Register) =
     LoadGlobal(width, imm, rd.r(x, y))
+
   override fun replaceUses(x: Register, y: Register) = this
   override fun replaceDefs(x: Register, y: Register) = replace(x, y)
 }
 
+@Suppress("Unused")
 class StoreGlobal(
   val width: Width,
   val base: Register,
@@ -411,6 +433,7 @@ class StoreGlobal(
   override val uses get() = setOf<Register>()
   override fun replace(x: Register, y: Register) =
     StoreGlobal(width, base.r(x, y), rt.r(x, y), imm)
+
   override fun replaceUses(x: Register, y: Register) = replace(x, y)
   override fun replaceDefs(x: Register, y: Register) = this
 }
@@ -431,12 +454,14 @@ sealed class CallLabel(inst: String, label: Label) : JumpLabel(inst, label) {
 }
 
 class Call(label: Label) : CallLabel("call", label)
+@Suppress("Unused")
 class Tail(label: Label) : CallLabel("tail", label)
 class Jump(label: Label) : JumpLabel("j", label) {
   override val defs get() = setOf<Register>()
   override val uses get() = setOf<Register>()
 }
 
+@Suppress("Unused")
 class JumpReg(val src: Register) : PsuedoInstruction {
   override val text get() = "jr\t${src.text}"
   override val defs get() = setOf<Register>()

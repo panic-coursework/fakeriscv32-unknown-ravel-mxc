@@ -109,6 +109,7 @@ class LocalizeGlobalVariables : Transformer() {
         Load(nextId(), Value(GlobalNamedIdentifier(v), PointerType(value.type)))
       return listOf(load, Store(addrId(), load.value))
     }
+
     fun store(): List<Instruction> {
       val load =
         Load(nextId(), Value(id("addr"), PointerType(value.type)))
@@ -277,5 +278,120 @@ class RemoveUnusedInstructions : Transformer() {
       )
     }
     return FunctionDefinition(node.id, node.args, node.returnType, body)
+  }
+}
+
+class LoopInvariantHoisting : Transformer() {
+  private lateinit var tree: DominatorTree
+  override fun transform(node: FunctionDefinition): FunctionDefinition {
+    tree = DominatorTree(node)
+    val loops = HashSet<Loop>()
+    for (n in node.body) {
+      for (h in tree.cfg.successors[n]!!) {
+        if (h in tree.ancestors[n]!!) {
+          loops.add(naturalLoopOf(n, h))
+        }
+      }
+    }
+    val blocksByHeader = loops
+      .map { Pair(it.header, it.blocks) }
+      .groupBy { it.first }
+      .mapValues { (_, v) -> v.flatMap { (_, blocks) -> blocks }.toSet() }
+
+    val invariantOps = loops.associateWith { loop ->
+      val ops = loop.blocks
+        .flatMap { it.body }
+        .filterIsInstance<Operation>()
+      val defs = ops.map { it.result }
+      val invariants = HashSet<Operation>()
+      val invariantLabels = HashSet<LocalIdentifier>()
+      while (true) {
+        var changed = false
+        for (op in ops) {
+          if (op is Call || op is Load) continue
+          val impureOps = listOf(
+            Int32BinaryOperation.Op.SDIV,
+            Int32BinaryOperation.Op.SREM,
+          )
+          if (op is Int32BinaryOperation && op.opType in impureOps) continue
+          if (op.uses.all { it !in defs || it in invariantLabels }) {
+            if (op !in invariants) {
+              changed = true
+              invariants.add(op)
+              invariantLabels.add(op.result)
+            }
+          }
+        }
+        if (!changed) break
+      }
+      invariants
+    }
+    val removedOps = invariantOps.values.flatten().toSet()
+    val maxLoopByInvariant = invariantOps
+      .flatMap { (loop, ops) -> ops.map { Pair(it, loop) } }
+      .groupBy { it.first }
+      .mapValues { (_, v) -> v.map { it.second }.maxBy { it.blocks.size } }
+    val preheaderContents = maxLoopByInvariant
+      .map { (op, loop) -> Pair(loop.header, op) }
+      .groupBy { it.first }
+      .mapValues { (_, v) -> v.map { it.second } }
+      .mapValues { (_, ops) ->
+        val ids = ops.map { it.result }.toSet()
+        val addedIds = mutableSetOf<LocalIdentifier>()
+        val list = mutableListOf<Operation>()
+        while (list.size < ops.size) {
+          for (op in ops) {
+            if (op.uses.all { it !in ids || it in addedIds } && op !in list) {
+              list.add(op)
+              addedIds.add(op.result)
+            }
+          }
+        }
+        list
+      }
+    val preheaders = preheaderContents.mapValues { (header, contents) ->
+      val base = (header.label.operand as LocalIdentifier).name
+      val label = Label(LocalNamedIdentifier("$base.preheader"))
+      val body = contents + BranchUnconditional(header.label)
+      BasicBlock(label, body, header.estimatedFrequency)
+    }
+
+    val body = node.body.flatMap { block ->
+      val insts = block.body.mapNotNull { inst ->
+        if (inst in removedOps) {
+          null
+        } else {
+          preheaders
+            .filterKeys { block !in blocksByHeader[it]!! }
+            .asSequence()
+            .map { (hdr, pre) ->
+              listOf(hdr, pre).map { it.label.operand as LocalIdentifier }
+            }
+            .fold(inst) { x, (hdr, pre) -> x.replace(hdr, pre) }
+        }
+      }
+      val newBlock = BasicBlock(block.label, insts, block.estimatedFrequency)
+
+      listOfNotNull(preheaders[block]) + newBlock
+    }
+
+    return FunctionDefinition(node.id, node.args, node.returnType, body)
+  }
+
+  private class Loop(val header: BasicBlock, val blocks: List<BasicBlock>)
+
+  private fun naturalLoopOf(m: BasicBlock, n: BasicBlock): Loop {
+    val worklist = mutableListOf(m)
+    val blocks = mutableListOf(m, n)
+    while (worklist.isNotEmpty()) {
+      val p = worklist.removeLast()
+      for (q in tree.cfg.predecessors[p] ?: setOf()) {
+        if (q !in blocks) {
+          blocks.add(q)
+          worklist.add(q)
+        }
+      }
+    }
+    return Loop(n, blocks)
   }
 }

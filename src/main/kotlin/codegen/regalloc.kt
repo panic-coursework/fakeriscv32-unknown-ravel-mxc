@@ -143,6 +143,7 @@ private class AllocContext(val func: Function) {
   val alias = registers.associateWith { it }.toMutableMap()
   val color = registers.associateWith { it as? PhysicalRegister }.toMutableMap()
 
+  @Suppress("PropertyName")
   val K = allocatableRegs.size
 
   fun alloc(start: Instant?): Function {
@@ -156,10 +157,10 @@ private class AllocContext(val func: Function) {
     makeWorklist()
     calculateWeight()
     val worklists = listOf(
-      Pair(simplifyWorklist, { simplify() }),
-      Pair(worklistMoves, { coalesce() }),
-      Pair(freezeWorklist, { freeze() }),
-      Pair(spillWorklist, { selectSpill() }),
+      Pair(simplifyWorklist, ::simplify),
+      Pair(worklistMoves, ::coalesce),
+      Pair(freezeWorklist, ::freeze),
+      Pair(spillWorklist, ::selectSpill),
     )
     while (true) {
       (worklists.find { (wl, _) -> wl.isNotEmpty() } ?: break).second()

@@ -23,6 +23,7 @@ object BuiltinSourceLocation :
   override fun toString() = "[native code]"
 }
 
+@Suppress("MemberVisibilityCanBePrivate")
 open class SourceContext(val source: Source, val parsed: ParserRuleContext?) {
   open val loc: SourceLocation
     get() = SourceLocation(

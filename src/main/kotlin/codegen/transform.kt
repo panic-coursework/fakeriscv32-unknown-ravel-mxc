@@ -260,7 +260,7 @@ class RemoveUnreachableDefinitions : Transformer() {
       .toMutableMap()
     val users = instructions.associateWith { HashSet<Instruction>() }
     for (block in node.body) {
-      val live = HashSet(reachingDefinitions.in_[block]!!)
+      val live = HashSet(reachingDefinitions.`in`[block]!!)
       for (inst in block.body) {
         val uses = if (inst is CallLabel) {
           (0..7).map { "a$it".R }

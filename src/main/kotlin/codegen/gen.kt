@@ -41,6 +41,7 @@ private class FunctionCodegenContext(private val func: FunctionDefinition) {
     VirtualRegister("var.${it.name}", null)
   }
 
+  @Suppress("PrivatePropertyName")
   private val LocalIdentifier.R
     get() = virtRegs[this]
       ?: throw MxcInternalError(null, "undefined ir register $this")

@@ -24,7 +24,7 @@ data class ControlFlow(
   }
 }
 
-class DominatorTree(val func: FunctionDefinition) {
+class DominatorTree(private val func: FunctionDefinition) {
   private val dfNum = HashMap<BasicBlock, Int>()
   private val vertex = HashMap<Int, BasicBlock>()
   private val parent = HashMap<BasicBlock, BasicBlock?>()
@@ -34,6 +34,7 @@ class DominatorTree(val func: FunctionDefinition) {
   val idom = HashMap<BasicBlock, BasicBlock>()
   private val samedom = HashMap<BasicBlock, BasicBlock>()
   private val best = HashMap<BasicBlock, BasicBlock>()
+  @Suppress("PrivatePropertyName")
   private var N = 0
 
   val cfg = ControlFlow.from(func)
@@ -104,12 +105,28 @@ class DominatorTree(val func: FunctionDefinition) {
     best[n] = n
   }
 
+  val children = HashMap<BasicBlock, Set<BasicBlock>>()
+  val ancestors = func.body.associateWith { HashSet<BasicBlock>() }
+
+  private fun fillAncestors(n: BasicBlock) {
+    for (c in children[n] ?: setOf()) {
+      ancestors[c]!!.add(n)
+      ancestors[c]!!.addAll(ancestors[n]!!)
+      fillAncestors(c)
+    }
+  }
+
   init {
     dominators()
+    idom
+      .map { (k, v) -> Pair(v, k) }
+      .groupBy { it.first }
+      .mapValuesTo(children) { (_, v) -> v.map { it.second }.toSet() }
+    fillAncestors(func.body.first())
   }
 }
 
-class PromoteAllocasToRegistersContext(val func: FunctionDefinition) {
+class PromoteAllocasToRegistersContext(private val func: FunctionDefinition) {
   private val allocas = func.body.flatMap { it.body.filterIsInstance<Alloca>() }
   private val vars = allocas.map { it.result }
   private val varType = allocas.associate { Pair(it.result, it.content) }
@@ -128,29 +145,16 @@ class PromoteAllocasToRegistersContext(val func: FunctionDefinition) {
       .toSet()
 
   private val tree = DominatorTree(func)
-  private val children = tree.idom
-    .map { (k, v) -> Pair(v, k) }
-    .groupBy { it.first }
-    .mapValues { (_, v) -> v.map { it.second }.toSet() }
-  private val ancestors = func.body.associateWith { HashSet<BasicBlock>() }
-
-  private fun fillAncestors(n: BasicBlock) {
-    for (c in children[n] ?: setOf()) {
-      ancestors[c]!!.add(n)
-      ancestors[c]!!.addAll(ancestors[n]!!)
-      fillAncestors(c)
-    }
-  }
 
   private val df = HashMap<BasicBlock, Set<BasicBlock>>()
   private fun computeDf(n: BasicBlock) {
     val s = tree.cfg.successors[n]!!
       .filter { tree.idom[it] != n }
       .toMutableSet()
-    for (c in children[n] ?: setOf()) {
+    for (c in tree.children[n] ?: setOf()) {
       computeDf(c)
       for (w in df[c]!!) {
-        if (n !in ancestors[w]!!) {
+        if (n !in tree.ancestors[w]!!) {
           s.add(w)
         }
       }
@@ -241,7 +245,7 @@ class PromoteAllocasToRegistersContext(val func: FunctionDefinition) {
         phi[j] = stack[a]!!.last()
       }
     }
-    for (x in children[n] ?: setOf()) {
+    for (x in tree.children[n] ?: setOf()) {
       rename(x)
     }
     n.body
@@ -304,7 +308,6 @@ class PromoteAllocasToRegistersContext(val func: FunctionDefinition) {
 
   init {
     val entry = func.body.first()
-    fillAncestors(entry)
     computeDf(entry)
     placePhis()
     initPhiMappings()

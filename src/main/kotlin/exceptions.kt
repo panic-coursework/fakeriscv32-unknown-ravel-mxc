@@ -19,6 +19,7 @@ open class MxcError(val ctx: SourceContext?, msg: String) : Exception(msg) {
 open class MxcInternalError(ctx: SourceContext?, msg: String) :
   MxcError(ctx, msg)
 
+open class NotImplemented(ctx: SourceContext?, msg: String) : MxcError(ctx, msg)
 open class SyntaxError(ctx: SourceContext?, msg: String) : MxcError(ctx, msg)
 open class ReferenceError(ctx: SourceContext?, msg: String) : MxcError(ctx, msg)
 open class TypeError(ctx: SourceContext?, msg: String) : MxcError(ctx, msg)

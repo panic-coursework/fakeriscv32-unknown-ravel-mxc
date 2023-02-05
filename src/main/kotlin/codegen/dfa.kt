@@ -3,7 +3,7 @@ package org.altk.lab.mxc.codegen
 enum class DfaDirection { FORWARD, BACKWARD }
 
 class DfaResult<T>(
-  val in_: Map<BasicBlock, Set<T>>,
+  val `in`: Map<BasicBlock, Set<T>>,
   val out: Map<BasicBlock, Set<T>>,
 )
 
@@ -28,7 +28,7 @@ fun <T> dfa(
   }
 
   val out = func.body.associateWith { HashSet<T>() }.toMutableMap()
-  val in_ = HashMap<BasicBlock, Set<T>>()
+  val `in` = HashMap<BasicBlock, Set<T>>()
   val worklist = func.body.toMutableList()
   while (worklist.isNotEmpty()) {
     val block = worklist.removeFirst()
@@ -37,7 +37,7 @@ fun <T> dfa(
     for (b in prev[block]!!) {
       newIn.addAll(out[b]!!)
     }
-    in_[block] = newIn
+    `in`[block] = newIn
     val newOut = HashSet(newIn)
     newOut.removeAll(kill[block]!!)
     newOut.addAll(gen[block]!!)
@@ -48,7 +48,7 @@ fun <T> dfa(
   }
 
   return when (direction) {
-    DfaDirection.FORWARD -> DfaResult(in_, out)
-    DfaDirection.BACKWARD -> DfaResult(out, in_)
+    DfaDirection.FORWARD -> DfaResult(`in`, out)
+    DfaDirection.BACKWARD -> DfaResult(out, `in`)
   }
 }

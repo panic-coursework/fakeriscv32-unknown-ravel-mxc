@@ -770,7 +770,9 @@ class MemoizePureFunctions : Transformer() {
   private var pure = true
   private val memoizeFunctions = HashSet<FunctionDeclaration>()
   override fun transform(node: FunctionDeclaration): FunctionDeclaration {
-    if (node.params.isNotEmpty() || node.id.name == "main") return node
+    if (node.params.isNotEmpty() || node.id.name == "main" || node.returnType is VoidType) {
+      return node
+    }
     pure = true
     super.transform(node)
     if (pure) {

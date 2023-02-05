@@ -1,6 +1,7 @@
 package org.altk.lab.mxc.ir
 
 import org.altk.lab.mxc.MxcInternalError
+import org.altk.lab.mxc.NotImplemented
 import org.altk.lab.mxc.ast.*
 import org.altk.lab.mxc.ast.Identifier
 import org.altk.lab.mxc.type.*
@@ -34,7 +35,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
   }
 
   val valueFromReference = HashMap<ReferenceRecord, Value<*>>()
-  val typeFromStruct = HashMap<String, MxStructType>()
+  private val typeFromStruct = HashMap<String, MxStructType>()
 
   private inner class FunctionContext {
     val nextIndex = HashMap<String, Int>()
@@ -166,17 +167,17 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
       typeFromStruct[it.id.name] =
         MxStructType(id, mutableListOf(), mutableMapOf())
     }
-    val typedefs = classes.map { class_ ->
-      val fields = class_.env.bindings
+    val typedefs = classes.map { clazz ->
+      val fields = clazz.env.bindings
         .filter { it.value.mutability == Mutability.MUTABLE }
         .map { Pair(it.key, it.value.type.ir) }
-      val ty = typeFromStruct[class_.id.name]!!
+      val ty = typeFromStruct[clazz.id.name]!!
       ty.indexFromName as MutableMap +=
         fields.mapIndexed { i, p -> Pair(p.first, i) }.toMap()
       (ty.pointee!! as AggregateType).subtypes as MutableList +=
         fields.map { it.second }
       TypeDeclaration(
-        LocalNamedIdentifier(class_.id.name),
+        LocalNamedIdentifier(clazz.id.name),
         AggregateType(fields.map { it.second }),
       )
     }
@@ -191,24 +192,24 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
         GlobalVariableDeclaration(id, Value(NullLiteral, ty))
       }
     val funcs = functions.map { ir(it) }
-    val methods = classes.flatMap { class_ ->
-      class_.body.filterIsInstance<AstFunctionDeclaration>()
-        .map { func -> ir(func, class_) }
+    val methods = classes.flatMap { clazz ->
+      clazz.body.filterIsInstance<AstFunctionDeclaration>()
+        .map { func -> ir(func, clazz) }
     }
     return Module(prelude + strings + typedefs + globalVars + funcs + methods)
   }
 
   private fun ir(
     func: AstFunctionDeclaration,
-    class_: ClassDeclaration? = null,
+    `class`: ClassDeclaration? = null,
   ): FunctionDefinition {
     val ty =
       func.env.outerEnv!!.getBinding(null, func.id.name).type as MxFunction
     val ctx = FunctionContext()
-    val thisArg = class_?.let {
+    val thisArg = `class`?.let {
       valueOf(
         LocalNamedIdentifier("this"),
-        (class_.env as ClassEnvironmentRecord).type.ir,
+        (`class`.env as ClassEnvironmentRecord).type.ir,
       )
     }
     val thisArgs = thisArg?.let { listOf(it) } ?: listOf()
@@ -236,7 +237,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
       ctx.debug()
       throw e
     }
-    val classPrefix = class_?.id?.name?.let { "$it." } ?: ""
+    val classPrefix = `class`?.id?.name?.let { "$it." } ?: ""
     return FunctionDefinition(
       GlobalNamedIdentifier(classPrefix + func.id.name),
       thisArgs + params,
@@ -567,7 +568,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
           is AstIdentifier ->
             Triple(entry, GlobalNamedIdentifier(node.callee.name), null)
 
-          else -> TODO("lambda: ${node.callee}")
+          else -> throw NotImplemented(node.ctx, "lambda: ${node.callee}")
         }
         val (block1, args0) =
           node.arguments.fold(Pair(block0, listOf<Value<*>>())) { pair, arg ->
@@ -588,7 +589,7 @@ class IrGenerationContext(ast: Program, val ssa: Boolean = true) :
         }
       }
 
-      is LambdaExpression -> TODO("lambda")
+      is LambdaExpression -> throw NotImplemented(node.ctx, "lambda")
       is ComputedMemberExpression -> {
         val ptr = getLhsPointer(entry, node)
         val op = Load(entry.func.nextId("computed.load"), ptr.result!!.asType())
